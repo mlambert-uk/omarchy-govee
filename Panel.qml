@@ -25,6 +25,7 @@ Panel {
 
   property var devices: []        // Full device list from API (lights only)
   property var deviceStates: ({}) // Map of device id -> { powerSwitch, brightness, ... }
+  property int stateRevision: 0   // Bumped on every state change to force binding updates
   property bool loading: false
   property string errorText: ""
 
@@ -166,7 +167,7 @@ Panel {
           var states = root.deviceStates
           states[dev.device] = Api.parseDeviceState(raw)
           root.deviceStates = states
-          root.deviceStatesChanged()
+          root.stateRevision++
         }
         root.stateIndex++
         // Small delay between state requests to respect rate limits
@@ -195,7 +196,7 @@ Panel {
     if (!states[device]) states[device] = {}
     states[device].powerSwitch = currentlyOn ? 0 : 1
     deviceStates = states
-    deviceStatesChanged()
+    stateRevision++
   }
 
   function setBrightness(sku, device, value) {
@@ -205,7 +206,7 @@ Panel {
     if (!states[device]) states[device] = {}
     states[device].brightness = value
     deviceStates = states
-    deviceStatesChanged()
+    stateRevision++
   }
 
   Process {
@@ -462,7 +463,7 @@ Panel {
                 required property int index
                 width: parent.width
                 device: modelData
-                deviceState: root.deviceStates[modelData.device] || {}
+                deviceState: root.stateRevision >= 0 ? (root.deviceStates[modelData.device] || {}) : {}
                 bar: root.bar
                 onTogglePower: function(sku, deviceId, currentlyOn) {
                   root.togglePower(sku, deviceId, currentlyOn)

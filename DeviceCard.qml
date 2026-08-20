@@ -36,6 +36,14 @@ Item {
   property bool colorExpanded: false
   property bool scenesExpanded: false
 
+  // Collapse expanded sections when device turns off
+  onIsOnChanged: {
+    if (!isOn) {
+      colorExpanded = false
+      scenesExpanded = false
+    }
+  }
+
   signal togglePower()
   signal setBrightness(int value)
   signal setColor(int rgbInt)
@@ -130,6 +138,7 @@ Item {
 
     // ── SKU + control buttons row ──
     Row {
+      visible: root.isOn
       width: parent.width
       spacing: Style.space(8)
 
@@ -231,7 +240,7 @@ Item {
 
     // ── Brightness slider ──
     Row {
-      visible: root.showBrightness
+      visible: root.showBrightness && root.isOn
       width: parent.width
       spacing: Style.space(10)
 
@@ -315,7 +324,7 @@ Item {
 
     // ── Fan: Oscillation toggle ──
     Row {
-      visible: root.showOscillation
+      visible: root.showOscillation && root.isOn
       width: parent.width
       spacing: Style.space(10)
 
@@ -370,7 +379,7 @@ Item {
 
     // ── Fan: Work mode selector ──
     Column {
-      visible: root.showWorkMode && root.workModeOptions !== null
+      visible: root.showWorkMode && root.workModeOptions !== null && root.isOn
       width: parent.width
       spacing: Style.space(6)
 

@@ -119,7 +119,8 @@ Panel {
 
   function refresh() {
     if (!hasKey) return
-    loading = true
+    // Don't show loading spinner on subsequent refreshes — only first load
+    if (deviceModel.count === 0) loading = true
     errorText = ""
     listProc.command = Api.listDevicesCommand(apiKey)
     listProc.running = true
@@ -139,11 +140,25 @@ Panel {
         var allDevices = Api.parseDevicesResponse(raw)
         var lights = Api.filterLights(allDevices)
         root.rawDevices = lights
-        root.buildModel(lights)
+
+        // Only rebuild the model on first load or if the device list changed
+        if (root.needsModelRebuild(lights)) {
+          root.buildModel(lights)
+        }
         root.loading = false
         root.fetchAllStates()
       }
     }
+  }
+
+  // Check if the device list has changed (different devices or order).
+  function needsModelRebuild(lights) {
+    if (deviceModel.count !== lights.length) return true
+    for (var i = 0; i < lights.length; i++) {
+      var item = deviceModel.get(i)
+      if (item.sku !== lights[i].sku || item.deviceId !== lights[i].device) return true
+    }
+    return false
   }
 
   function buildModel(lights) {
@@ -251,8 +266,9 @@ Panel {
 
   function fetchNextState() {
     if (stateIndex >= deviceModel.count) {
-      // After all states fetched, fetch scenes
-      fetchAllScenes()
+      // After all states fetched, fetch scenes only on first load
+      if (sceneModels.length === 0 || (sceneModels.length > 0 && sceneModels[0].count === 0 && deviceModel.count > 0))
+        fetchAllScenes()
       return
     }
     var item = deviceModel.get(stateIndex)
@@ -268,15 +284,20 @@ Panel {
         var raw = String(text || "").trim()
         if (raw && root.stateIndex < deviceModel.count && !root.controlInFlight) {
           var parsed = Api.parseDeviceState(raw)
+          var item = deviceModel.get(root.stateIndex)
           var isOn = parsed.powerSwitch === 1
           var bri = parsed.brightness !== undefined ? parsed.brightness : 100
-          deviceModel.setProperty(root.stateIndex, "powerOn", isOn)
-          deviceModel.setProperty(root.stateIndex, "brightness", bri)
+
+          // Only update properties that actually changed
+          if (item.powerOn !== isOn)
+            deviceModel.setProperty(root.stateIndex, "powerOn", isOn)
+          if (item.brightness !== bri)
+            deviceModel.setProperty(root.stateIndex, "brightness", bri)
 
           // Color state
-          if (parsed.colorRgb !== undefined && parsed.colorRgb !== "")
+          if (parsed.colorRgb !== undefined && parsed.colorRgb !== "" && item.devColorRgb !== parsed.colorRgb)
             deviceModel.setProperty(root.stateIndex, "devColorRgb", parsed.colorRgb)
-          if (parsed.colorTemperatureK !== undefined && parsed.colorTemperatureK !== "" && parsed.colorTemperatureK !== 0)
+          if (parsed.colorTemperatureK !== undefined && parsed.colorTemperatureK !== "" && parsed.colorTemperatureK !== 0 && item.devColorTempK !== parsed.colorTemperatureK)
             deviceModel.setProperty(root.stateIndex, "devColorTempK", parsed.colorTemperatureK)
         }
         root.stateIndex++
@@ -295,8 +316,14 @@ Panel {
 
   property bool controlInFlight: false
 
+  // Reset the auto-refresh timer whenever the user interacts.
+  function resetRefreshTimer() {
+    refreshTimer.restart()
+  }
+
   function controlDevice(sku, device, capability) {
     controlInFlight = true
+    resetRefreshTimer()
     controlProc.command = Api.controlCommand(apiKey, sku, device, capability)
     controlProc.running = true
   }

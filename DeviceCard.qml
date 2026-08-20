@@ -158,18 +158,18 @@ Item {
 
       // Color temp icon button
       Rectangle {
-        visible: root.showColorTemp
-        width: tempLabel.implicitWidth + Style.space(8)
-        height: Style.space(16)
+        visible: root.showColorTemp && !root.showColor
+        width: tempLabel.implicitWidth + Style.space(12)
+        height: Style.space(20)
         radius: Style.space(3)
-        color: colorTempArea.containsMouse && root.isOn ? Style.hoverFillFor(root.fg, Color.accent) : "transparent"
+        color: root.colorExpanded ? Color.accent : (colorTempArea.containsMouse && root.isOn ? Style.hoverFillFor(root.fg, Color.accent) : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08))
         anchors.verticalCenter: parent.verticalCenter
 
         Text {
           id: tempLabel
           anchors.centerIn: parent
-          text: "\u{F0E4E}"  // brightness/temp icon
-          color: Qt.darker(root.fg, 1.4)
+          text: "Temp"
+          color: root.colorExpanded ? "#ffffff" : Qt.darker(root.fg, 1.2)
           font.family: root.fontFam
           font.pixelSize: Style.font.caption
         }
@@ -190,17 +190,17 @@ Item {
       // Scenes button
       Rectangle {
         visible: root.showScenes
-        width: scenesLabel.implicitWidth + Style.space(8)
-        height: Style.space(16)
+        width: scenesLabel.implicitWidth + Style.space(12)
+        height: Style.space(20)
         radius: Style.space(3)
-        color: scenesArea.containsMouse && root.isOn ? Style.hoverFillFor(root.fg, Color.accent) : "transparent"
+        color: root.scenesExpanded ? Color.accent : (scenesArea.containsMouse && root.isOn ? Style.hoverFillFor(root.fg, Color.accent) : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08))
         anchors.verticalCenter: parent.verticalCenter
 
         Text {
           id: scenesLabel
           anchors.centerIn: parent
-          text: "\u{F0D04}"  // palette/scenes icon
-          color: Qt.darker(root.fg, 1.4)
+          text: "Scenes"
+          color: root.scenesExpanded ? "#ffffff" : Qt.darker(root.fg, 1.2)
           font.family: root.fontFam
           font.pixelSize: Style.font.caption
         }

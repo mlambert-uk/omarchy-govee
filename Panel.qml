@@ -472,25 +472,22 @@ Panel {
   Process {
     id: controlProc
     property int controlIndex: -1
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        if (controlProc.controlIndex >= 0) {
-          var inflight = root.controlInFlightDevices
-          delete inflight[controlProc.controlIndex]
-          root.controlInFlightDevices = inflight
-        }
-        controlProc.controlIndex = -1
-        // Process next queued command
-        root.processControlQueue()
-      }
-    }
+    stdout: StdioCollector { waitForEnd: true }
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var err = String(text || "").trim()
         if (err) console.warn("Govee control error:", err)
       }
+    }
+    onExited: function(exitCode) {
+      if (controlProc.controlIndex >= 0) {
+        var inflight = root.controlInFlightDevices
+        delete inflight[controlProc.controlIndex]
+        root.controlInFlightDevices = inflight
+      }
+      controlProc.controlIndex = -1
+      root.processControlQueue()
     }
   }
 

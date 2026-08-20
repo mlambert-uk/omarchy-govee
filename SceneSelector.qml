@@ -26,6 +26,12 @@ Item {
   onScenesChanged: buildGroups()
   Component.onCompleted: buildGroups()
 
+  // React to items being added to the scenes ListModel after it's assigned
+  Connections {
+    target: root.scenes
+    function onCountChanged() { root.buildGroups() }
+  }
+
   function buildGroups() {
     if (!scenes) { groups = []; return }
     var groupMap = {}

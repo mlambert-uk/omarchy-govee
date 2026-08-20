@@ -51,15 +51,22 @@ function parseDevicesResponse(raw) {
 // ─── Device state ───────────────────────────────────────────────────────────
 
 // Curl command to query a single device's current state.
+// The state endpoint is POST with sku+device in the JSON body.
 function deviceStateCommand(apiKey, sku, device) {
-  var url = API_BASE + "/router/api/v1/device/state"
-    + "?sku=" + encodeURIComponent(sku)
-    + "&device=" + encodeURIComponent(device)
+  var body = JSON.stringify({
+    requestId: generateRequestId(),
+    payload: {
+      sku: sku,
+      device: device
+    }
+  })
   return [
     "curl", "-fsS", "--max-time", "10",
+    "-X", "POST",
     "-H", "Govee-API-Key: " + apiKey,
     "-H", "Content-Type: application/json",
-    url
+    "-d", body,
+    API_BASE + "/router/api/v1/device/state"
   ]
 }
 

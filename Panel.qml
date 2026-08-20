@@ -312,7 +312,10 @@ Panel {
         if (raw && root.stateIndex < deviceModel.count && !root.controlInFlight) {
           var parsed = Api.parseDeviceState(raw)
           var item = deviceModel.get(root.stateIndex)
-          var isOn = parsed.powerSwitch === 1
+
+          // If device is offline, treat as off regardless of last-known state
+          var isOnline = parsed.online !== false
+          var isOn = isOnline && parsed.powerSwitch === 1
           var bri = parsed.brightness !== undefined ? parsed.brightness : 100
 
           // Only update properties that actually changed

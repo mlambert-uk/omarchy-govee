@@ -23,11 +23,12 @@ Panel {
   property bool setupMode: !hasKey
   property string setupError: ""
 
-  property var devices: []        // Full device list from API (lights only)
-  property var deviceStates: ({}) // Map of device id -> { powerSwitch, brightness, ... }
-  property int stateRevision: 0   // Bumped on every state change to force binding updates
   property bool loading: false
   property string errorText: ""
+
+  // The device list model holds both device info and live state in one place,
+  // so QML's ListModel change notifications drive the UI reactively.
+  ListModel { id: deviceModel }
 
   // ─── Panel lifecycle ────────────────────────────────────────────────────
 
@@ -111,6 +112,9 @@ Panel {
 
   // ─── Device discovery ───────────────────────────────────────────────────
 
+  // Keep raw device data for capabilities lookup.
+  property var rawDevices: []
+
   function refresh() {
     if (!hasKey) return
     loading = true
@@ -131,11 +135,27 @@ Panel {
           return
         }
         var allDevices = Api.parseDevicesResponse(raw)
-        root.devices = Api.filterLights(allDevices)
+        var lights = Api.filterLights(allDevices)
+        root.rawDevices = lights
+        root.buildModel(lights)
         root.loading = false
-        // Fetch state for each device
         root.fetchAllStates()
       }
+    }
+  }
+
+  function buildModel(lights) {
+    deviceModel.clear()
+    for (var i = 0; i < lights.length; i++) {
+      var dev = lights[i]
+      deviceModel.append({
+        sku: dev.sku,
+        deviceId: dev.device,
+        deviceName: Api.deviceDisplayName(dev),
+        hasBrightness: Api.hasCapability(dev, "devices.capabilities.range", "brightness"),
+        powerOn: false,
+        brightness: 100
+      })
     }
   }
 
@@ -145,14 +165,13 @@ Panel {
 
   function fetchAllStates() {
     stateIndex = 0
-    deviceStates = {}
     fetchNextState()
   }
 
   function fetchNextState() {
-    if (stateIndex >= devices.length) return
-    var dev = devices[stateIndex]
-    stateProc.command = Api.deviceStateCommand(apiKey, dev.sku, dev.device)
+    if (stateIndex >= deviceModel.count) return
+    var item = deviceModel.get(stateIndex)
+    stateProc.command = Api.deviceStateCommand(apiKey, item.sku, item.deviceId)
     stateProc.running = true
   }
 
@@ -162,15 +181,16 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var raw = String(text || "").trim()
-        if (raw && root.stateIndex < root.devices.length) {
-          var dev = root.devices[root.stateIndex]
-          var states = root.deviceStates
-          states[dev.device] = Api.parseDeviceState(raw)
-          root.deviceStates = states
-          root.stateRevision++
+        if (raw && root.stateIndex < deviceModel.count) {
+          var parsed = Api.parseDeviceState(raw)
+          var isOn = parsed.powerSwitch === 1
+          var bri = parsed.brightness !== undefined ? parsed.brightness : 100
+          deviceModel.set(root.stateIndex, {
+            powerOn: isOn,
+            brightness: bri
+          })
         }
         root.stateIndex++
-        // Small delay between state requests to respect rate limits
         stateDelayTimer.restart()
       }
     }
@@ -189,33 +209,24 @@ Panel {
     controlProc.running = true
   }
 
-  function togglePower(sku, device, currentlyOn) {
-    controlDevice(sku, device, Api.powerCapability(!currentlyOn))
-    // Optimistic update
-    var states = deviceStates
-    if (!states[device]) states[device] = {}
-    states[device].powerSwitch = currentlyOn ? 0 : 1
-    deviceStates = states
-    stateRevision++
+  function togglePower(index) {
+    var item = deviceModel.get(index)
+    var newState = !item.powerOn
+    controlDevice(item.sku, item.deviceId, Api.powerCapability(newState))
+    deviceModel.setProperty(index, "powerOn", newState)
   }
 
-  function setBrightness(sku, device, value) {
-    controlDevice(sku, device, Api.brightnessCapability(value))
-    // Optimistic update
-    var states = deviceStates
-    if (!states[device]) states[device] = {}
-    states[device].brightness = value
-    deviceStates = states
-    stateRevision++
+  function setBrightness(index, value) {
+    var item = deviceModel.get(index)
+    controlDevice(item.sku, item.deviceId, Api.brightnessCapability(value))
+    deviceModel.setProperty(index, "brightness", value)
   }
 
   Process {
     id: controlProc
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: {
-        // Control fire-and-forget; errors are silent for now
-      }
+      onStreamFinished: {}
     }
   }
 
@@ -223,7 +234,7 @@ Panel {
 
   Timer {
     id: refreshTimer
-    interval: 30000  // 30 seconds
+    interval: 30000
     running: root.opened && root.hasKey
     repeat: true
     onTriggered: root.refresh()
@@ -441,7 +452,7 @@ Panel {
 
           // ── No devices found ──
           Text {
-            visible: !root.loading && !root.setupMode && root.hasKey && root.devices.length === 0 && root.errorText === ""
+            visible: !root.loading && !root.setupMode && root.hasKey && deviceModel.count === 0 && root.errorText === ""
             anchors.horizontalCenter: parent.horizontalCenter
             text: "No light devices found"
             color: Qt.darker(root.bar ? root.bar.foreground : "#ffffff", 1.4)
@@ -451,26 +462,30 @@ Panel {
 
           // ── Device list ──
           Column {
-            visible: !root.setupMode && root.devices.length > 0
+            visible: !root.setupMode && deviceModel.count > 0
             width: parent.width
             spacing: Style.space(8)
 
             Repeater {
-              model: root.devices
+              model: deviceModel
 
               DeviceCard {
-                required property var modelData
                 required property int index
+                required property string sku
+                required property string deviceId
+                required property string deviceName
+                required property bool hasBrightness
+                required property bool powerOn
+                required property int brightness
                 width: parent.width
-                device: modelData
-                deviceState: root.stateRevision >= 0 ? (root.deviceStates[modelData.device] || {}) : {}
+                isOn: powerOn
+                deviceBrightness: brightness
+                showBrightness: hasBrightness
+                name: deviceName
+                skuLabel: sku
                 bar: root.bar
-                onTogglePower: function(sku, deviceId, currentlyOn) {
-                  root.togglePower(sku, deviceId, currentlyOn)
-                }
-                onSetBrightness: function(sku, deviceId, value) {
-                  root.setBrightness(sku, deviceId, value)
-                }
+                onTogglePower: root.togglePower(index)
+                onSetBrightness: function(value) { root.setBrightness(index, value) }
               }
             }
           }

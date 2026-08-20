@@ -2,22 +2,21 @@ import QtQuick
 import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
-import "GoveeApi.js" as Api
 
 Item {
   id: root
 
-  property var device: ({})
-  property var deviceState: ({})
+  // Properties fed directly from the ListModel via required properties.
+  property bool isOn: false
+  property int deviceBrightness: 100
+  property bool showBrightness: false
+  property string name: ""
+  property string skuLabel: ""
   property var bar: null
 
-  signal togglePower(string sku, string deviceId, bool currentlyOn)
-  signal setBrightness(string sku, string deviceId, int value)
+  signal togglePower()
+  signal setBrightness(int value)
 
-  readonly property bool isOn: deviceState.powerSwitch === 1
-  readonly property int brightness: deviceState.brightness !== undefined ? deviceState.brightness : 100
-  readonly property bool hasBrightness: Api.hasCapability(device, "devices.capabilities.range", "brightness")
-  readonly property string displayName: Api.deviceDisplayName(device)
   readonly property color fg: bar ? bar.foreground : "#ffffff"
   readonly property string fontFam: bar ? bar.fontFamily : ""
 
@@ -28,7 +27,7 @@ Item {
     anchors.leftMargin: Style.space(12)
     anchors.rightMargin: Style.space(12)
     radius: Style.cornerRadius
-    color: root.bar ? root.bar.foreground : "#ffffff"
+    color: root.fg
     opacity: 0.04
   }
 
@@ -57,7 +56,7 @@ Item {
 
       // Device name
       Text {
-        text: root.displayName
+        text: root.name
         color: root.fg
         font.family: root.fontFam
         font.pixelSize: Style.font.body
@@ -93,14 +92,14 @@ Item {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onClicked: root.togglePower(root.device.sku, root.device.device, root.isOn)
+          onClicked: root.togglePower()
         }
       }
     }
 
     // ── SKU label ──
     Text {
-      text: device.sku || ""
+      text: root.skuLabel
       color: Qt.darker(root.fg, 1.6)
       font.family: root.fontFam
       font.pixelSize: Style.font.caption
@@ -108,13 +107,13 @@ Item {
 
     // ── Brightness slider ──
     Row {
-      visible: root.hasBrightness
+      visible: root.showBrightness
       width: parent.width
       spacing: Style.space(10)
 
       // Sun icon (dim)
       Text {
-        text: "\u{F0E4E}"  // nf-md-brightness_5
+        text: "\u{F0E4E}"
         color: Qt.darker(root.fg, 1.5)
         font.family: root.fontFam
         font.pixelSize: Style.font.bodySmall
@@ -139,7 +138,7 @@ Item {
 
           // Filled portion
           Rectangle {
-            width: parent.width * (root.brightness / 100)
+            width: parent.width * (root.deviceBrightness / 100)
             height: parent.height
             radius: parent.radius
             color: root.isOn ? Color.accent : Qt.darker(root.fg, 1.5)
@@ -159,7 +158,7 @@ Item {
           border.width: 2
           border.color: "#ffffff"
           anchors.verticalCenter: parent.verticalCenter
-          x: (sliderContainer.width - width) * (root.brightness / 100)
+          x: (sliderContainer.width - width) * (root.deviceBrightness / 100)
 
           Behavior on x { enabled: !sliderMouse.pressed; NumberAnimation { duration: 80 } }
           Behavior on color { ColorAnimation { duration: 150 } }
@@ -180,11 +179,10 @@ Item {
           }
           onReleased: function(mouse) {
             var value = Math.max(1, Math.min(100, Math.round((mouse.x / sliderContainer.width) * 100)))
-            root.setBrightness(root.device.sku, root.device.device, value)
+            root.setBrightness(value)
           }
 
           function updateBrightness(mouseX) {
-            // Local visual feedback only; actual API call on release
             var value = Math.max(1, Math.min(100, Math.round((mouseX / sliderContainer.width) * 100)))
             sliderKnob.x = (sliderContainer.width - sliderKnob.width) * (value / 100)
           }
@@ -193,7 +191,7 @@ Item {
 
       // Brightness percentage label
       Text {
-        text: root.brightness + "%"
+        text: root.deviceBrightness + "%"
         color: Qt.darker(root.fg, 1.3)
         font.family: root.fontFam
         font.pixelSize: Style.font.bodySmall

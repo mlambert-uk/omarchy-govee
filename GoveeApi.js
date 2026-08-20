@@ -367,11 +367,6 @@ function filterControllable(devices) {
   return result
 }
 
-// Legacy alias
-function filterLights(devices) {
-  return filterControllable(devices)
-}
-
 // ─── Fan capability helpers ─────────────────────────────────────────────────
 
 // Convenience: oscillation toggle command payload.

@@ -81,16 +81,19 @@ Panel {
   }
 
   function saveApiKey(key) {
-    var trimmed = key.replace(/^\s+|\s+$/, "")
+    var trimmed = key.replace(/^\s+|\s+$/g, "")
     if (trimmed === "") {
       setupError = "API key cannot be empty"
       return
     }
     setupError = ""
-    keySaveProc.command = ["sh", "-c",
-      "mkdir -p \"$(dirname '" + Api.keyFilePath(Quickshell.env("HOME")) + "')\" && " +
-      "printf '%s' '" + Api.keyFileContents(trimmed).replace(/'/g, "'\\''") + "' > '" +
-      Api.keyFilePath(Quickshell.env("HOME")) + "'"
+    var filePath = Api.keyFilePath(Quickshell.env("HOME"))
+    var content = Api.keyFileContents(trimmed)
+    // Use a safe argv-array script that receives the path and content as arguments.
+    // No shell string interpolation of the API key.
+    keySaveProc.command = ["bash", "-c",
+      'mkdir -p "$(dirname "$1")" && printf \'%s\' "$2" > "$1"',
+      "govee-save", filePath, content
     ]
     keySaveProc.running = true
   }
@@ -128,17 +131,18 @@ Panel {
 
   Process {
     id: listProc
+    property string stderrText: ""
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var raw = String(text || "").trim()
         if (!raw) {
-          root.errorText = "No response from Govee API"
+          root.errorText = listProc.stderrText || "No response from Govee API"
           root.loading = false
           return
         }
         var allDevices = Api.parseDevicesResponse(raw)
-        var lights = Api.filterLights(allDevices)
+        var lights = Api.filterControllable(allDevices)
         root.rawDevices = lights
 
         // Only rebuild the model on first load or if the device list changed
@@ -148,6 +152,14 @@ Panel {
         root.loading = false
         root.fetchAllStates()
       }
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: { listProc.stderrText = String(text || "").trim() }
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && !stderrText)
+        stderrText = "Network error (exit " + exitCode + ")"
     }
   }
 
@@ -309,7 +321,7 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var raw = String(text || "").trim()
-        if (raw && root.stateIndex < deviceModel.count && !root.controlInFlight) {
+        if (raw && root.stateIndex < deviceModel.count && !root.isControlInFlight(root.stateIndex)) {
           var parsed = Api.parseDeviceState(raw)
           var item = deviceModel.get(root.stateIndex)
 
@@ -349,6 +361,7 @@ Panel {
         stateDelayTimer.restart()
       }
     }
+    stderr: StdioCollector { waitForEnd: true }
   }
 
   Timer {
@@ -359,43 +372,51 @@ Panel {
 
   // ─── Device control ─────────────────────────────────────────────────────
 
-  property bool controlInFlight: false
+  // Track which device indices have control commands in flight.
+  property var controlInFlightDevices: ({})
+
+  function isControlInFlight(index) {
+    return controlInFlightDevices[index] === true
+  }
 
   // Reset the auto-refresh timer whenever the user interacts.
   function resetRefreshTimer() {
     refreshTimer.restart()
   }
 
-  function controlDevice(sku, device, capability) {
-    controlInFlight = true
+  function controlDevice(sku, device, capability, index) {
+    var inflight = controlInFlightDevices
+    inflight[index] = true
+    controlInFlightDevices = inflight
     resetRefreshTimer()
     controlProc.command = Api.controlCommand(apiKey, sku, device, capability)
+    controlProc.controlIndex = index
     controlProc.running = true
   }
 
   function togglePower(index) {
     var item = deviceModel.get(index)
     var newState = !item.powerOn
-    controlDevice(item.sku, item.deviceId, Api.powerCapability(newState))
+    controlDevice(item.sku, item.deviceId, Api.powerCapability(newState), index)
     deviceModel.setProperty(index, "powerOn", newState)
   }
 
   function setBrightness(index, value) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.brightnessCapability(value))
+    controlDevice(item.sku, item.deviceId, Api.brightnessCapability(value), index)
     deviceModel.setProperty(index, "brightness", value)
   }
 
   function setColor(index, rgbInt) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.colorRgbCapability(rgbInt))
+    controlDevice(item.sku, item.deviceId, Api.colorRgbCapability(rgbInt), index)
     deviceModel.setProperty(index, "devColorRgb", rgbInt)
     deviceModel.setProperty(index, "devActiveScene", -1)
   }
 
   function setColorTemp(index, kelvin) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.colorTemperatureCapability(kelvin))
+    controlDevice(item.sku, item.deviceId, Api.colorTemperatureCapability(kelvin), index)
     deviceModel.setProperty(index, "devColorTempK", kelvin)
     deviceModel.setProperty(index, "devActiveScene", -1)
   }
@@ -405,36 +426,42 @@ Panel {
     var values = sceneValues[index]
     if (!values || sceneIndex < 0 || sceneIndex >= values.length) return
     var sceneValue = values[sceneIndex]
-    controlDevice(item.sku, item.deviceId, Api.lightSceneCapability(sceneValue))
+    controlDevice(item.sku, item.deviceId, Api.lightSceneCapability(sceneValue), index)
     deviceModel.setProperty(index, "devActiveScene", sceneIndex)
   }
 
   function setOscillation(index, on) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.oscillationCapability(on))
+    controlDevice(item.sku, item.deviceId, Api.oscillationCapability(on), index)
     deviceModel.setProperty(index, "oscillation", on)
   }
 
   function setWorkMode(index, workMode, modeValue) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.workModeCapability(workMode, modeValue))
+    controlDevice(item.sku, item.deviceId, Api.workModeCapability(workMode, modeValue), index)
     deviceModel.setProperty(index, "workMode", workMode)
     deviceModel.setProperty(index, "modeValue", modeValue)
   }
 
   function setMusicMode(index, musicMode, sensitivity, autoColor, rgb) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.musicModeCapability(musicMode, sensitivity, autoColor, rgb))
+    controlDevice(item.sku, item.deviceId, Api.musicModeCapability(musicMode, sensitivity, autoColor, rgb), index)
   }
 
   Process {
     id: controlProc
+    property int controlIndex: -1
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        root.controlInFlight = false
+        if (controlProc.controlIndex >= 0) {
+          var inflight = root.controlInFlightDevices
+          delete inflight[controlProc.controlIndex]
+          root.controlInFlightDevices = inflight
+        }
       }
     }
+    stderr: StdioCollector { waitForEnd: true }
   }
 
   // ─── Auto-refresh while open ────────────────────────────────────────────
@@ -736,7 +763,6 @@ Panel {
                 onSetOscillation: function(on) { root.setOscillation(index, on) }
                 onSetWorkMode: function(wm, mv) { root.setWorkMode(index, wm, mv) }
                 onSetMusicMode: function(mode, sens, auto, rgb) { root.setMusicMode(index, mode, sens, auto, rgb) }
-                onOpenScenes: {}
               }
             }
           }

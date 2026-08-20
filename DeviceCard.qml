@@ -62,7 +62,6 @@ Item {
   signal setOscillation(bool on)
   signal setWorkMode(int wm, int mv)
   signal setMusicMode(int mode, int sens, bool autoColor, int rgb)
-  signal openScenes()
 
   readonly property color fg: bar ? bar.foreground : "#ffffff"
   readonly property string fontFam: bar ? bar.fontFamily : ""

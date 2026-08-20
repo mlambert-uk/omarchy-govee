@@ -314,13 +314,80 @@ function isLight(device) {
   return hasCapability(device, "devices.capabilities.on_off", "powerSwitch")
 }
 
-// Filter the full device list down to lights only.
-function filterLights(devices) {
-  var lights = []
+// Check if a device is a fan.
+function isFan(device) {
+  return device && device.type === "devices.types.fan"
+}
+
+// Filter the full device list to controllable devices (lights + fans + anything with power).
+function filterControllable(devices) {
+  var result = []
   for (var i = 0; i < devices.length; i++) {
-    if (isLight(devices[i])) lights.push(devices[i])
+    if (hasCapability(devices[i], "devices.capabilities.on_off", "powerSwitch"))
+      result.push(devices[i])
   }
-  return lights
+  return result
+}
+
+// Legacy alias
+function filterLights(devices) {
+  return filterControllable(devices)
+}
+
+// ─── Fan capability helpers ─────────────────────────────────────────────────
+
+// Convenience: oscillation toggle command payload.
+function oscillationCapability(on) {
+  return {
+    type: "devices.capabilities.toggle",
+    instance: "oscillationToggle",
+    value: on ? 1 : 0
+  }
+}
+
+// Convenience: work mode command payload.
+// workMode: integer (1=FanSpeed, 2=Auto, 3=Sleep, 4=Nature, 5=Custom)
+// modeValue: integer (speed 1-12 for FanSpeed/Sleep/Nature, 0 for Auto/Custom)
+function workModeCapability(workMode, modeValue) {
+  return {
+    type: "devices.capabilities.work_mode",
+    instance: "workMode",
+    value: { workMode: workMode, modeValue: modeValue }
+  }
+}
+
+// Extract work mode options from a device's capability.
+// Returns { modes: [{name, value, speeds}], maxSpeed } or null.
+function getWorkModeOptions(device) {
+  var cap = getCapability(device, "devices.capabilities.work_mode", "workMode")
+  if (!cap || !cap.parameters || !Array.isArray(cap.parameters.fields)) return null
+
+  var modeField = null
+  var valueField = null
+  for (var i = 0; i < cap.parameters.fields.length; i++) {
+    if (cap.parameters.fields[i].fieldName === "workMode") modeField = cap.parameters.fields[i]
+    if (cap.parameters.fields[i].fieldName === "modeValue") valueField = cap.parameters.fields[i]
+  }
+  if (!modeField || !Array.isArray(modeField.options)) return null
+
+  var modes = []
+  var maxSpeed = 0
+  for (var j = 0; j < modeField.options.length; j++) {
+    var mode = modeField.options[j]
+    var speeds = 0
+    // Find matching modeValue options
+    if (valueField && Array.isArray(valueField.options)) {
+      for (var k = 0; k < valueField.options.length; k++) {
+        var vo = valueField.options[k]
+        if (vo.name === mode.name && Array.isArray(vo.options)) {
+          speeds = vo.options.length
+          if (speeds > maxSpeed) maxSpeed = speeds
+        }
+      }
+    }
+    modes.push({ name: mode.name, value: mode.value, speeds: speeds })
+  }
+  return { modes: modes, maxSpeed: maxSpeed }
 }
 
 // Get a friendly display name for a device.

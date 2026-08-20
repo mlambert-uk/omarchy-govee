@@ -23,6 +23,14 @@ Item {
   property var bar: null
   property var sceneModel: null
   property int sceneActive: -1
+  property bool deviceIsFan: false
+  property bool showOscillation: false
+  property bool showWorkMode: false
+  property int fanMaxSpeed: 12
+  property bool fanOscillation: false
+  property int fanWorkMode: 0
+  property int fanModeValue: 0
+  property var workModeOptions: null  // { modes: [{name, value, speeds}], maxSpeed }
 
   // Expanded state for inline controls
   property bool colorExpanded: false
@@ -33,6 +41,8 @@ Item {
   signal setColor(int rgbInt)
   signal setColorTemp(int kelvin)
   signal setScene(int sceneValue)
+  signal setOscillation(bool on)
+  signal setWorkMode(int wm, int mv)
   signal openScenes()
 
   readonly property color fg: bar ? bar.foreground : "#ffffff"
@@ -300,6 +310,208 @@ Item {
         width: Style.space(32)
         horizontalAlignment: Text.AlignRight
         anchors.verticalCenter: parent.verticalCenter
+      }
+    }
+
+    // ── Fan: Oscillation toggle ──
+    Row {
+      visible: root.showOscillation
+      width: parent.width
+      spacing: Style.space(10)
+
+      Text {
+        text: "Oscillation"
+        color: Qt.darker(root.fg, 1.3)
+        font.family: root.fontFam
+        font.pixelSize: Style.font.bodySmall
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      Item { width: parent.width - oscLabel.implicitWidth - oscToggle.width - Style.space(20); height: 1 }
+
+      Text {
+        id: oscLabel
+        text: root.fanOscillation ? "On" : "Off"
+        color: Qt.darker(root.fg, 1.4)
+        font.family: root.fontFam
+        font.pixelSize: Style.font.caption
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      Rectangle {
+        id: oscToggle
+        width: Style.space(32)
+        height: Style.space(18)
+        radius: height / 2
+        color: root.fanOscillation ? Color.accent : Qt.darker(root.fg, 2.5)
+        anchors.verticalCenter: parent.verticalCenter
+
+        Behavior on color { ColorAnimation { duration: 150 } }
+
+        Rectangle {
+          width: Style.space(14)
+          height: Style.space(14)
+          radius: width / 2
+          color: "#ffffff"
+          anchors.verticalCenter: parent.verticalCenter
+          x: root.fanOscillation ? parent.width - width - Style.space(2) : Style.space(2)
+          Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.InOutQuad } }
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: root.isOn ? Qt.PointingHandCursor : Qt.ArrowCursor
+          enabled: root.isOn
+          onClicked: root.setOscillation(!root.fanOscillation)
+        }
+      }
+    }
+
+    // ── Fan: Work mode selector ──
+    Column {
+      visible: root.showWorkMode && root.workModeOptions !== null
+      width: parent.width
+      spacing: Style.space(6)
+
+      // Mode pills
+      Flow {
+        width: parent.width
+        spacing: Style.space(5)
+
+        Repeater {
+          model: root.workModeOptions ? root.workModeOptions.modes.length : 0
+
+          Rectangle {
+            required property int index
+            readonly property var mode: root.workModeOptions.modes[index]
+            readonly property bool isActive: root.fanWorkMode === mode.value
+
+            width: modeText.implicitWidth + Style.space(14)
+            height: Style.space(26)
+            radius: height / 2
+            color: {
+              if (isActive) return Color.accent
+              if (modeArea.containsMouse && root.isOn)
+                return Style.hoverFillFor(root.fg, Color.accent)
+              return Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.08)
+            }
+
+            Behavior on color { ColorAnimation { duration: 100 } }
+
+            Text {
+              id: modeText
+              anchors.centerIn: parent
+              text: mode.name
+              color: isActive ? "#ffffff" : root.fg
+              font.family: root.fontFam
+              font.pixelSize: Style.font.bodySmall
+              font.bold: isActive
+            }
+
+            MouseArea {
+              id: modeArea
+              anchors.fill: parent
+              hoverEnabled: true
+              cursorShape: root.isOn ? Qt.PointingHandCursor : Qt.ArrowCursor
+              enabled: root.isOn
+              onClicked: {
+                // Use default modeValue: 0 for modes without speed, current speed for modes with speed
+                var mv = mode.speeds > 0 ? Math.max(1, root.fanModeValue) : 0
+                root.setWorkMode(mode.value, mv)
+              }
+            }
+          }
+        }
+      }
+
+      // Speed slider (only for modes that have speed options)
+      Row {
+        visible: {
+          if (!root.workModeOptions) return false
+          for (var i = 0; i < root.workModeOptions.modes.length; i++) {
+            if (root.workModeOptions.modes[i].value === root.fanWorkMode)
+              return root.workModeOptions.modes[i].speeds > 0
+          }
+          return false
+        }
+        width: parent.width
+        spacing: Style.space(10)
+
+        Text {
+          text: "Speed"
+          color: Qt.darker(root.fg, 1.4)
+          font.family: root.fontFam
+          font.pixelSize: Style.font.caption
+          anchors.verticalCenter: parent.verticalCenter
+        }
+
+        Item {
+          id: speedSliderContainer
+          width: parent.width - Style.space(80)
+          height: Style.space(20)
+          anchors.verticalCenter: parent.verticalCenter
+
+          Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            height: Style.space(4)
+            radius: height / 2
+            color: Qt.darker(root.fg, 2.5)
+
+            Rectangle {
+              width: root.fanMaxSpeed > 0 ? parent.width * (root.fanModeValue / root.fanMaxSpeed) : 0
+              height: parent.height
+              radius: parent.radius
+              color: root.isOn ? Color.accent : Qt.darker(root.fg, 1.5)
+              Behavior on width { NumberAnimation { duration: 80 } }
+            }
+          }
+
+          Rectangle {
+            id: speedKnob
+            width: Style.space(14)
+            height: Style.space(14)
+            radius: width / 2
+            color: root.isOn ? Color.accent : Qt.darker(root.fg, 1.5)
+            border.width: 2
+            border.color: "#ffffff"
+            anchors.verticalCenter: parent.verticalCenter
+            x: root.fanMaxSpeed > 0 ? (speedSliderContainer.width - width) * (root.fanModeValue / root.fanMaxSpeed) : 0
+            Behavior on x { enabled: !speedMouse.pressed; NumberAnimation { duration: 80 } }
+          }
+
+          MouseArea {
+            id: speedMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: root.isOn ? Qt.PointingHandCursor : Qt.ArrowCursor
+            enabled: root.isOn
+
+            onPressed: function(mouse) { updateSpeed(mouse.x) }
+            onPositionChanged: function(mouse) { if (pressed) updateSpeed(mouse.x) }
+            onReleased: function(mouse) {
+              var value = Math.max(1, Math.min(root.fanMaxSpeed, Math.round((mouse.x / speedSliderContainer.width) * root.fanMaxSpeed)))
+              root.setWorkMode(root.fanWorkMode, value)
+            }
+
+            function updateSpeed(mouseX) {
+              var value = Math.max(1, Math.min(root.fanMaxSpeed, Math.round((mouseX / speedSliderContainer.width) * root.fanMaxSpeed)))
+              speedKnob.x = (speedSliderContainer.width - speedKnob.width) * (value / root.fanMaxSpeed)
+            }
+          }
+        }
+
+        Text {
+          text: root.fanModeValue + "/" + root.fanMaxSpeed
+          color: Qt.darker(root.fg, 1.3)
+          font.family: root.fontFam
+          font.pixelSize: Style.font.bodySmall
+          width: Style.space(32)
+          horizontalAlignment: Text.AlignRight
+          anchors.verticalCenter: parent.verticalCenter
+        }
       }
     }
 

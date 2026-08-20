@@ -170,22 +170,32 @@ Panel {
       var hasTemp = Api.hasCapability(dev, "devices.capabilities.color_setting", "colorTemperatureK")
       var tempRange = Api.getColorTempRange(dev)
       var hasSceneCap = Api.hasCapability(dev, "devices.capabilities.dynamic_scene", "lightScene")
+      var hasOscillation = Api.hasCapability(dev, "devices.capabilities.toggle", "oscillationToggle")
+      var hasWorkMode = Api.hasCapability(dev, "devices.capabilities.work_mode", "workMode")
+      var workModeOpts = Api.getWorkModeOptions(dev)
 
       deviceModel.append({
         sku: dev.sku,
         deviceId: dev.device,
         deviceName: Api.deviceDisplayName(dev),
+        isFan: Api.isFan(dev),
         hasBrightness: Api.hasCapability(dev, "devices.capabilities.range", "brightness"),
         hasColor: hasColor,
         hasColorTemp: hasTemp,
         hasScenes: hasSceneCap,
+        hasOscillation: hasOscillation,
+        hasWorkMode: hasWorkMode,
+        maxSpeed: workModeOpts ? workModeOpts.maxSpeed : 0,
         devColorTempMin: tempRange ? tempRange.min : 2000,
         devColorTempMax: tempRange ? tempRange.max : 9000,
         powerOn: false,
         brightness: 100,
         devColorRgb: 16777215,
         devColorTempK: 4000,
-        devActiveScene: -1
+        devActiveScene: -1,
+        oscillation: false,
+        workMode: 0,
+        modeValue: 0
       })
 
       // Create an empty scene model; populated later by fetchScenes
@@ -193,7 +203,17 @@ Panel {
       models.push(sceneModel)
     }
     sceneModels = models
+
+    // Store work mode options per device for the UI
+    var wmOpts = []
+    for (var j = 0; j < lights.length; j++) {
+      wmOpts.push(Api.getWorkModeOptions(lights[j]))
+    }
+    workModeOptions = wmOpts
   }
+
+  // Per-device work mode options (array indexed by device position).
+  property var workModeOptions: []
 
   // ─── Scene fetching ─────────────────────────────────────────────────────
 
@@ -299,6 +319,21 @@ Panel {
             deviceModel.setProperty(root.stateIndex, "devColorRgb", parsed.colorRgb)
           if (parsed.colorTemperatureK !== undefined && parsed.colorTemperatureK !== "" && parsed.colorTemperatureK !== 0 && item.devColorTempK !== parsed.colorTemperatureK)
             deviceModel.setProperty(root.stateIndex, "devColorTempK", parsed.colorTemperatureK)
+
+          // Fan state
+          if (parsed.oscillationToggle !== undefined) {
+            var osc = parsed.oscillationToggle === 1
+            if (item.oscillation !== osc)
+              deviceModel.setProperty(root.stateIndex, "oscillation", osc)
+          }
+          if (parsed.workMode !== undefined && typeof parsed.workMode === "object") {
+            var wm = parsed.workMode.workMode !== undefined ? parsed.workMode.workMode : 0
+            var mv = parsed.workMode.modeValue !== undefined ? parsed.workMode.modeValue : 0
+            if (item.workMode !== wm)
+              deviceModel.setProperty(root.stateIndex, "workMode", wm)
+            if (item.modeValue !== mv)
+              deviceModel.setProperty(root.stateIndex, "modeValue", mv)
+          }
         }
         root.stateIndex++
         stateDelayTimer.restart()
@@ -362,6 +397,19 @@ Panel {
     var sceneValue = values[sceneIndex]
     controlDevice(item.sku, item.deviceId, Api.lightSceneCapability(sceneValue))
     deviceModel.setProperty(index, "devActiveScene", sceneIndex)
+  }
+
+  function setOscillation(index, on) {
+    var item = deviceModel.get(index)
+    controlDevice(item.sku, item.deviceId, Api.oscillationCapability(on))
+    deviceModel.setProperty(index, "oscillation", on)
+  }
+
+  function setWorkMode(index, workMode, modeValue) {
+    var item = deviceModel.get(index)
+    controlDevice(item.sku, item.deviceId, Api.workModeCapability(workMode, modeValue))
+    deviceModel.setProperty(index, "workMode", workMode)
+    deviceModel.setProperty(index, "modeValue", modeValue)
   }
 
   Process {
@@ -618,10 +666,14 @@ Panel {
                 required property string sku
                 required property string deviceId
                 required property string deviceName
+                required property bool isFan
                 required property bool hasBrightness
                 required property bool hasColor
                 required property bool hasColorTemp
                 required property bool hasScenes
+                required property bool hasOscillation
+                required property bool hasWorkMode
+                required property int maxSpeed
                 required property int devColorTempMin
                 required property int devColorTempMax
                 required property bool powerOn
@@ -629,6 +681,9 @@ Panel {
                 required property int devColorRgb
                 required property int devColorTempK
                 required property int devActiveScene
+                required property bool oscillation
+                required property int workMode
+                required property int modeValue
 
                 width: parent.width
                 isOn: powerOn
@@ -637,21 +692,31 @@ Panel {
                 showColor: hasColor
                 showColorTemp: hasColorTemp
                 showScenes: hasScenes
+                showOscillation: hasOscillation
+                showWorkMode: hasWorkMode
+                fanMaxSpeed: maxSpeed
                 colorRgb: devColorRgb
                 colorTempK: devColorTempK
                 colorTempMin: devColorTempMin
                 colorTempMax: devColorTempMax
+                fanOscillation: oscillation
+                fanWorkMode: workMode
+                fanModeValue: modeValue
                 name: deviceName
                 skuLabel: sku
+                deviceIsFan: isFan
                 bar: root.bar
                 sceneModel: root.sceneModels.length > index ? root.sceneModels[index] : null
                 sceneActive: devActiveScene
+                workModeOptions: root.workModeOptions.length > index ? root.workModeOptions[index] : null
 
                 onTogglePower: root.togglePower(index)
                 onSetBrightness: function(value) { root.setBrightness(index, value) }
                 onSetColor: function(rgbInt) { root.setColor(index, rgbInt) }
                 onSetColorTemp: function(kelvin) { root.setColorTemp(index, kelvin) }
                 onSetScene: function(sceneValue) { root.setScene(index, sceneValue) }
+                onSetOscillation: function(on) { root.setOscillation(index, on) }
+                onSetWorkMode: function(wm, mv) { root.setWorkMode(index, wm, mv) }
                 onOpenScenes: {}
               }
             }

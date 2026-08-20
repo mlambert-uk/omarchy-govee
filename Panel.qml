@@ -361,7 +361,13 @@ Panel {
         stateDelayTimer.restart()
       }
     }
-    stderr: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var err = String(text || "").trim()
+        if (err) console.warn("Govee state poll error:", err)
+      }
+    }
   }
 
   Timer {
@@ -374,6 +380,9 @@ Panel {
 
   // Track which device indices have control commands in flight.
   property var controlInFlightDevices: ({})
+
+  // Command queue: each entry is { command: [...], index: int }
+  property var controlQueue: []
 
   function isControlInFlight(index) {
     return controlInFlightDevices[index] === true
@@ -389,8 +398,20 @@ Panel {
     inflight[index] = true
     controlInFlightDevices = inflight
     resetRefreshTimer()
-    controlProc.command = Api.controlCommand(apiKey, sku, device, capability)
-    controlProc.controlIndex = index
+
+    var cmd = Api.controlCommand(apiKey, sku, device, capability)
+    controlQueue.push({ command: cmd, index: index })
+    controlQueue = controlQueue  // trigger change
+    processControlQueue()
+  }
+
+  function processControlQueue() {
+    if (controlProc.running) return
+    if (controlQueue.length === 0) return
+    var next = controlQueue.shift()
+    controlQueue = controlQueue  // trigger change
+    controlProc.controlIndex = next.index
+    controlProc.command = next.command
     controlProc.running = true
   }
 
@@ -459,9 +480,18 @@ Panel {
           delete inflight[controlProc.controlIndex]
           root.controlInFlightDevices = inflight
         }
+        controlProc.controlIndex = -1
+        // Process next queued command
+        root.processControlQueue()
       }
     }
-    stderr: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var err = String(text || "").trim()
+        if (err) console.warn("Govee control error:", err)
+      }
+    }
   }
 
   // ─── Auto-refresh while open ────────────────────────────────────────────

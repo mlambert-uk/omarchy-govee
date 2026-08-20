@@ -26,9 +26,11 @@ Panel {
   property bool loading: false
   property string errorText: ""
 
-  // The device list model holds both device info and live state in one place,
-  // so QML's ListModel change notifications drive the UI reactively.
+  // The device list model holds device info + live state.
   ListModel { id: deviceModel }
+
+  // Per-device scene models (indexed by device list position).
+  property var sceneModels: []
 
   // ─── Panel lifecycle ────────────────────────────────────────────────────
 
@@ -146,17 +148,96 @@ Panel {
 
   function buildModel(lights) {
     deviceModel.clear()
+    var models = []
     for (var i = 0; i < lights.length; i++) {
       var dev = lights[i]
+      var hasColor = Api.hasCapability(dev, "devices.capabilities.color_setting", "colorRgb")
+      var hasTemp = Api.hasCapability(dev, "devices.capabilities.color_setting", "colorTemperatureK")
+      var tempRange = Api.getColorTempRange(dev)
+      var hasSceneCap = Api.hasCapability(dev, "devices.capabilities.dynamic_scene", "lightScene")
+
       deviceModel.append({
         sku: dev.sku,
         deviceId: dev.device,
         deviceName: Api.deviceDisplayName(dev),
         hasBrightness: Api.hasCapability(dev, "devices.capabilities.range", "brightness"),
+        hasColor: hasColor,
+        hasColorTemp: hasTemp,
+        hasScenes: hasSceneCap,
+        devColorTempMin: tempRange ? tempRange.min : 2000,
+        devColorTempMax: tempRange ? tempRange.max : 9000,
         powerOn: false,
-        brightness: 100
+        brightness: 100,
+        devColorRgb: 16777215,
+        devColorTempK: 4000,
+        devActiveScene: -1
       })
+
+      // Create an empty scene model; populated later by fetchScenes
+      var sceneModel = Qt.createQmlObject('import QtQuick; ListModel {}', root)
+      models.push(sceneModel)
     }
+    sceneModels = models
+  }
+
+  // ─── Scene fetching ─────────────────────────────────────────────────────
+
+  // Per-device scene values (objects like { paramId, id }) indexed by
+  // position in sceneModels, then by ListModel row index.
+  property var sceneValues: []
+
+  property int sceneIndex: 0
+
+  function fetchAllScenes() {
+    sceneIndex = 0
+    sceneValues = []
+    for (var i = 0; i < deviceModel.count; i++) sceneValues.push([])
+    fetchNextScenes()
+  }
+
+  function fetchNextScenes() {
+    if (sceneIndex >= deviceModel.count) return
+    var item = deviceModel.get(sceneIndex)
+    if (!item.hasScenes) {
+      sceneIndex++
+      fetchNextScenes()
+      return
+    }
+    scenesProc.command = Api.dynamicScenesCommand(apiKey, item.sku, item.deviceId)
+    scenesProc.running = true
+  }
+
+  Process {
+    id: scenesProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var raw = String(text || "").trim()
+        if (raw && root.sceneIndex < deviceModel.count) {
+          var scenes = Api.parseDynamicScenes(raw)
+          var model = root.sceneModels[root.sceneIndex]
+          var values = root.sceneValues
+          if (model) {
+            model.clear()
+            var deviceValues = []
+            for (var i = 0; i < scenes.length; i++) {
+              model.append({ name: scenes[i].name, value: i })
+              deviceValues.push(scenes[i].value)
+            }
+            values[root.sceneIndex] = deviceValues
+            root.sceneValues = values
+          }
+        }
+        root.sceneIndex++
+        sceneDelayTimer.restart()
+      }
+    }
+  }
+
+  Timer {
+    id: sceneDelayTimer
+    interval: 200
+    onTriggered: root.fetchNextScenes()
   }
 
   // ─── Device state polling ───────────────────────────────────────────────
@@ -169,7 +250,11 @@ Panel {
   }
 
   function fetchNextState() {
-    if (stateIndex >= deviceModel.count) return
+    if (stateIndex >= deviceModel.count) {
+      // After all states fetched, fetch scenes
+      fetchAllScenes()
+      return
+    }
     var item = deviceModel.get(stateIndex)
     stateProc.command = Api.deviceStateCommand(apiKey, item.sku, item.deviceId)
     stateProc.running = true
@@ -187,14 +272,18 @@ Panel {
           var bri = parsed.brightness !== undefined ? parsed.brightness : 100
           deviceModel.setProperty(root.stateIndex, "powerOn", isOn)
           deviceModel.setProperty(root.stateIndex, "brightness", bri)
+
+          // Color state
+          if (parsed.colorRgb !== undefined && parsed.colorRgb !== "")
+            deviceModel.setProperty(root.stateIndex, "devColorRgb", parsed.colorRgb)
+          if (parsed.colorTemperatureK !== undefined && parsed.colorTemperatureK !== "" && parsed.colorTemperatureK !== 0)
+            deviceModel.setProperty(root.stateIndex, "devColorTempK", parsed.colorTemperatureK)
         }
         root.stateIndex++
         stateDelayTimer.restart()
       }
     }
   }
-
-  Process { id: debugProc }
 
   Timer {
     id: stateDelayTimer
@@ -204,7 +293,6 @@ Panel {
 
   // ─── Device control ─────────────────────────────────────────────────────
 
-  // Set to true during user-initiated control to block state poll overwrites.
   property bool controlInFlight: false
 
   function controlDevice(sku, device, capability) {
@@ -224,6 +312,29 @@ Panel {
     var item = deviceModel.get(index)
     controlDevice(item.sku, item.deviceId, Api.brightnessCapability(value))
     deviceModel.setProperty(index, "brightness", value)
+  }
+
+  function setColor(index, rgbInt) {
+    var item = deviceModel.get(index)
+    controlDevice(item.sku, item.deviceId, Api.colorRgbCapability(rgbInt))
+    deviceModel.setProperty(index, "devColorRgb", rgbInt)
+    deviceModel.setProperty(index, "devActiveScene", -1)
+  }
+
+  function setColorTemp(index, kelvin) {
+    var item = deviceModel.get(index)
+    controlDevice(item.sku, item.deviceId, Api.colorTemperatureCapability(kelvin))
+    deviceModel.setProperty(index, "devColorTempK", kelvin)
+    deviceModel.setProperty(index, "devActiveScene", -1)
+  }
+
+  function setScene(index, sceneIndex) {
+    var item = deviceModel.get(index)
+    var values = sceneValues[index]
+    if (!values || sceneIndex < 0 || sceneIndex >= values.length) return
+    var sceneValue = values[sceneIndex]
+    controlDevice(item.sku, item.deviceId, Api.lightSceneCapability(sceneValue))
+    deviceModel.setProperty(index, "devActiveScene", sceneIndex)
   }
 
   Process {
@@ -268,7 +379,7 @@ Panel {
     open: root.opened
     centerOnBar: true
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(400))
+    contentWidth: panel.fittedContentWidth(Style.space(420))
     contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight)
 
     PanelKeyCatcher {
@@ -481,17 +592,40 @@ Panel {
                 required property string deviceId
                 required property string deviceName
                 required property bool hasBrightness
+                required property bool hasColor
+                required property bool hasColorTemp
+                required property bool hasScenes
+                required property int devColorTempMin
+                required property int devColorTempMax
                 required property bool powerOn
                 required property int brightness
+                required property int devColorRgb
+                required property int devColorTempK
+                required property int devActiveScene
+
                 width: parent.width
                 isOn: powerOn
                 deviceBrightness: brightness
                 showBrightness: hasBrightness
+                showColor: hasColor
+                showColorTemp: hasColorTemp
+                showScenes: hasScenes
+                colorRgb: devColorRgb
+                colorTempK: devColorTempK
+                colorTempMin: devColorTempMin
+                colorTempMax: devColorTempMax
                 name: deviceName
                 skuLabel: sku
                 bar: root.bar
+                sceneModel: root.sceneModels.length > index ? root.sceneModels[index] : null
+                sceneActive: devActiveScene
+
                 onTogglePower: root.togglePower(index)
                 onSetBrightness: function(value) { root.setBrightness(index, value) }
+                onSetColor: function(rgbInt) { root.setColor(index, rgbInt) }
+                onSetColorTemp: function(kelvin) { root.setColorTemp(index, kelvin) }
+                onSetScene: function(sceneValue) { root.setScene(index, sceneValue) }
+                onOpenScenes: {}
               }
             }
           }

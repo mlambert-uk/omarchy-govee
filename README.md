@@ -1,14 +1,30 @@
-# Govee Lights — Omarchy Shell Plugin
+# Govee — Omarchy Shell Plugin
 
-Control your Govee smart lights directly from the Omarchy desktop bar.
+Control Govee smart lights and fans from the Omarchy desktop bar.
 
 ## Features
 
-- Discover all Govee light devices on your account
-- Toggle power on/off per device
-- Adjust brightness with a slider
-- Auto-refreshes state every 30 seconds while the panel is open
-- Middle-click the bar icon to force refresh
+**Lights:**
+- Power on/off toggle per device
+- Brightness slider
+- RGB color picker (HSV hue bar + saturation/value grid)
+- Color temperature slider (2000K–9000K)
+- Dynamic scenes — 240+ scenes organized by category (Nature, Mood, Music, Gaming, Party, Holiday, Cinema, Space, Dynamic) with collapsible groups
+- Music mode — visualisation modes (Energic, Rhythm, Spectrum, etc.), sensitivity control, auto-color toggle, and fixed color picker
+
+**Fans:**
+- Power on/off
+- Oscillation toggle
+- Work mode selector (FanSpeed, Auto, Sleep, Nature, Custom)
+- Speed slider (1–12)
+
+**UX:**
+- Devices that are off show only name + power toggle
+- Offline/unplugged devices detected and shown as off
+- Smart refresh — no flicker, diff-only state updates, timer resets on interaction
+- Device groups (BaseGroup, SameModeGroup) filtered out
+- Auto-refresh every 30 seconds while panel is open
+- Middle-click bar icon to force refresh
 
 ## Installation
 
@@ -16,15 +32,10 @@ Control your Govee smart lights directly from the Omarchy desktop bar.
 omarchy plugin add https://github.com/mlambert-uk/omarchy-govee.git --enable
 ```
 
-Or clone locally for development:
+Or for local development:
 
 ```bash
-cp -r /path/to/omarchy-govee ~/.config/omarchy/plugins/mlambert-uk.govee
-```
-
-Then enable it:
-
-```bash
+ln -s /path/to/omarchy-govee ~/.config/omarchy/plugins/mlambert-uk.govee
 omarchy plugin enable mlambert-uk.govee
 ```
 
@@ -43,10 +54,13 @@ The key is stored locally at `~/.local/state/omarchy/settings/govee.json`.
 - **Click** the bar icon to open the panel
 - **Middle-click** the bar icon to refresh device states
 - **Toggle** the switch next to each device to turn it on/off
-- **Drag** the brightness slider to adjust (only active when the device is on)
-- **Reset** link at the bottom of the panel clears your stored API key
+- **Drag** the brightness slider to adjust
+- **Click** the color swatch to open the color picker + temperature slider
+- **Click** "Scenes" to browse dynamic scenes by category
+- **Click** "Music" to activate music-reactive modes
+- **Reset** link at the bottom clears your stored API key
 
-You can also toggle the panel via IPC:
+Toggle via IPC/keybind:
 
 ```bash
 omarchy-shell shell toggle mlambert-uk.govee
@@ -56,32 +70,47 @@ omarchy-shell shell toggle mlambert-uk.govee
 
 ```
 mlambert-uk.govee/
-├── manifest.json      # Plugin metadata
-├── BarWidget.qml      # Bar icon entry point
-├── Panel.qml          # Main panel UI (setup flow + device list)
-├── DeviceCard.qml     # Per-device card (power toggle + brightness)
-├── GoveeApi.js        # API helpers (curl commands, response parsing)
-└── README.md          # This file
+├── manifest.json        # Plugin metadata
+├── BarWidget.qml        # Bar icon entry point
+├── Panel.qml            # Main panel (setup, device list, state management)
+├── DeviceCard.qml       # Per-device card (power, brightness, color, fan, music)
+├── ColorPicker.qml      # HSV color picker component
+├── SceneSelector.qml    # Categorized scene browser with grouped variants
+├── GoveeApi.js          # API helpers (commands, parsing, color math)
+├── LICENSE              # MIT License
+└── README.md            # This file
 ```
 
 ## API Reference
 
 This plugin uses the [Govee Developer API v2](https://developer.govee.com/docs/getting-started):
 
-- `GET /router/api/v1/user/devices` — list devices and capabilities
-- `GET /router/api/v1/device/state` — query device state
-- `POST /router/api/v1/device/control` — send commands
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/router/api/v1/user/devices` | GET | List devices and capabilities |
+| `/router/api/v1/device/state` | POST | Query device state |
+| `/router/api/v1/device/control` | POST | Send commands |
+| `/router/api/v1/device/scenes` | POST | Fetch dynamic scenes |
 
-Rate limits: 10 req/min for device list, 10 req/min/device for control, 30 req/min/device for state.
+Rate limits: 30 req/min for device list, 10 req/min/device for control, 30 req/min/device for state.
 
-## Roadmap
+## Supported Devices
 
-- [ ] RGB color picker
-- [ ] Color temperature slider
-- [ ] Scene/effect selector
-- [ ] Music mode activation
-- [ ] Group controls (all on/off, set all to same color)
-- [ ] Device naming/grouping
+Any Govee device with a power switch is shown. Tested with:
+
+- **H61E1** — LED strip (full RGB, scenes, music mode)
+- **H6008** — LED bulb (color, scenes)
+- **H6061** — Glide Hexa panels (color, scenes, music mode)
+- **H70C4** — RGBWIC string lights (color, scenes, music mode)
+- **H7075** — Smart LED downlight (color, scenes, music mode)
+- **H7107** — Tower fan (oscillation, work modes, speed)
+
+## Known Limitations
+
+- The Govee API does not expose which scene is currently active — only scenes set from this plugin are highlighted
+- Some device features (e.g. H7107 night light) are not exposed by the Govee cloud API
+- Offline devices show as off — commands sent to them will silently fail
+- Music mode uses the device's built-in microphone, not desktop audio
 
 ## License
 

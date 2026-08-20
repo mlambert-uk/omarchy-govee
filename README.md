@@ -2,6 +2,8 @@
 
 Control Govee smart lights and fans from the Omarchy desktop bar.
 
+![omarchy-govee](preview.png)
+
 ## Features
 
 **Lights:**

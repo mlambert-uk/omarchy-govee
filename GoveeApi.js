@@ -320,11 +320,18 @@ function isFan(device) {
 }
 
 // Filter the full device list to controllable devices (lights + fans + anything with power).
+// Excludes device groups (BaseGroup, SameModeGroup, DreamViewScenic, etc.)
 function filterControllable(devices) {
   var result = []
   for (var i = 0; i < devices.length; i++) {
-    if (hasCapability(devices[i], "devices.capabilities.on_off", "powerSwitch"))
-      result.push(devices[i])
+    var dev = devices[i]
+    // Skip groups — they have no real device type or use group SKUs
+    if (!dev.type || dev.type === "")
+      continue
+    if (dev.sku === "BaseGroup" || dev.sku === "SameModeGroup" || dev.sku === "DreamViewScenic")
+      continue
+    if (hasCapability(dev, "devices.capabilities.on_off", "powerSwitch"))
+      result.push(dev)
   }
   return result
 }

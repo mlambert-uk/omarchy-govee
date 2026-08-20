@@ -61,7 +61,7 @@ function deviceStateCommand(apiKey, sku, device) {
     }
   })
   return [
-    "curl", "-fsS", "--max-time", "10",
+    "curl", "-sS", "--max-time", "10",
     "-X", "POST",
     "-H", "Govee-API-Key: " + apiKey,
     "-H", "Content-Type: application/json",

@@ -181,20 +181,20 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         var raw = String(text || "").trim()
-        if (raw && root.stateIndex < deviceModel.count) {
+        if (raw && root.stateIndex < deviceModel.count && !root.controlInFlight) {
           var parsed = Api.parseDeviceState(raw)
           var isOn = parsed.powerSwitch === 1
           var bri = parsed.brightness !== undefined ? parsed.brightness : 100
-          deviceModel.set(root.stateIndex, {
-            powerOn: isOn,
-            brightness: bri
-          })
+          deviceModel.setProperty(root.stateIndex, "powerOn", isOn)
+          deviceModel.setProperty(root.stateIndex, "brightness", bri)
         }
         root.stateIndex++
         stateDelayTimer.restart()
       }
     }
   }
+
+  Process { id: debugProc }
 
   Timer {
     id: stateDelayTimer
@@ -204,7 +204,11 @@ Panel {
 
   // ─── Device control ─────────────────────────────────────────────────────
 
+  // Set to true during user-initiated control to block state poll overwrites.
+  property bool controlInFlight: false
+
   function controlDevice(sku, device, capability) {
+    controlInFlight = true
     controlProc.command = Api.controlCommand(apiKey, sku, device, capability)
     controlProc.running = true
   }
@@ -226,7 +230,9 @@ Panel {
     id: controlProc
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: {}
+      onStreamFinished: {
+        root.controlInFlight = false
+      }
     }
   }
 

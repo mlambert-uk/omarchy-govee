@@ -158,6 +158,37 @@ function lightSceneCapability(sceneValue) {
   }
 }
 
+// Convenience: music mode command payload.
+// musicMode: integer (mode value from device capabilities)
+// sensitivity: 0–100
+// autoColor: 1 (auto) or 0 (use rgb)
+// rgb: integer 0–16777215 (used when autoColor is 0)
+function musicModeCapability(musicMode, sensitivity, autoColor, rgb) {
+  return {
+    type: "devices.capabilities.music_setting",
+    instance: "musicMode",
+    value: {
+      musicMode: musicMode,
+      sensitivity: Math.max(0, Math.min(100, Math.round(sensitivity))),
+      autoColor: autoColor ? 1 : 0,
+      rgb: autoColor ? 0 : Math.max(0, Math.min(16777215, Math.round(rgb)))
+    }
+  }
+}
+
+// Extract music mode options from a device's capability.
+// Returns an array of { name, value } or empty array.
+function getMusicModeOptions(device) {
+  var cap = getCapability(device, "devices.capabilities.music_setting", "musicMode")
+  if (!cap || !cap.parameters || !Array.isArray(cap.parameters.fields)) return []
+  for (var i = 0; i < cap.parameters.fields.length; i++) {
+    var field = cap.parameters.fields[i]
+    if (field.fieldName === "musicMode" && Array.isArray(field.options))
+      return field.options
+  }
+  return []
+}
+
 // ─── Color conversion helpers ───────────────────────────────────────────────
 
 // Convert RGB integer (0xRRGGBB) to {r, g, b} components (0–255 each).

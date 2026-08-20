@@ -173,6 +173,7 @@ Panel {
       var hasOscillation = Api.hasCapability(dev, "devices.capabilities.toggle", "oscillationToggle")
       var hasWorkMode = Api.hasCapability(dev, "devices.capabilities.work_mode", "workMode")
       var workModeOpts = Api.getWorkModeOptions(dev)
+      var hasMusicMode = Api.hasCapability(dev, "devices.capabilities.music_setting", "musicMode")
 
       deviceModel.append({
         sku: dev.sku,
@@ -185,6 +186,7 @@ Panel {
         hasScenes: hasSceneCap,
         hasOscillation: hasOscillation,
         hasWorkMode: hasWorkMode,
+        hasMusic: hasMusicMode,
         maxSpeed: workModeOpts ? workModeOpts.maxSpeed : 0,
         devColorTempMin: tempRange ? tempRange.min : 2000,
         devColorTempMax: tempRange ? tempRange.max : 9000,
@@ -206,14 +208,19 @@ Panel {
 
     // Store work mode options per device for the UI
     var wmOpts = []
+    var mmOpts = []
     for (var j = 0; j < lights.length; j++) {
       wmOpts.push(Api.getWorkModeOptions(lights[j]))
+      mmOpts.push(Api.getMusicModeOptions(lights[j]))
     }
     workModeOptions = wmOpts
+    musicModeOptions = mmOpts
   }
 
   // Per-device work mode options (array indexed by device position).
   property var workModeOptions: []
+  // Per-device music mode options (array of [{name, value}] arrays).
+  property var musicModeOptions: []
 
   // ─── Scene fetching ─────────────────────────────────────────────────────
 
@@ -410,6 +417,11 @@ Panel {
     controlDevice(item.sku, item.deviceId, Api.workModeCapability(workMode, modeValue))
     deviceModel.setProperty(index, "workMode", workMode)
     deviceModel.setProperty(index, "modeValue", modeValue)
+  }
+
+  function setMusicMode(index, musicMode, sensitivity, autoColor, rgb) {
+    var item = deviceModel.get(index)
+    controlDevice(item.sku, item.deviceId, Api.musicModeCapability(musicMode, sensitivity, autoColor, rgb))
   }
 
   Process {
@@ -671,6 +683,7 @@ Panel {
                 required property bool hasColor
                 required property bool hasColorTemp
                 required property bool hasScenes
+                required property bool hasMusic
                 required property bool hasOscillation
                 required property bool hasWorkMode
                 required property int maxSpeed
@@ -709,6 +722,8 @@ Panel {
                 sceneModel: root.sceneModels.length > index ? root.sceneModels[index] : null
                 sceneActive: devActiveScene
                 workModeOptions: root.workModeOptions.length > index ? root.workModeOptions[index] : null
+                musicModeOptions: root.musicModeOptions.length > index ? root.musicModeOptions[index] : null
+                showMusic: hasMusic
 
                 onTogglePower: root.togglePower(index)
                 onSetBrightness: function(value) { root.setBrightness(index, value) }
@@ -717,6 +732,7 @@ Panel {
                 onSetScene: function(sceneValue) { root.setScene(index, sceneValue) }
                 onSetOscillation: function(on) { root.setOscillation(index, on) }
                 onSetWorkMode: function(wm, mv) { root.setWorkMode(index, wm, mv) }
+                onSetMusicMode: function(mode, sens, auto, rgb) { root.setMusicMode(index, mode, sens, auto, rgb) }
                 onOpenScenes: {}
               }
             }

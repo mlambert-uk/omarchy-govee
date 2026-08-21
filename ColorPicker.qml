@@ -10,7 +10,6 @@ Item {
 
   property var bar: null
   property int currentColor: 16711680  // Initial color as RGB int (red)
-  property bool enabled: true
 
   signal colorPicked(int rgbInt)
 

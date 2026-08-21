@@ -5,12 +5,16 @@
 //
 // Security:
 // - The API key is validated to contain only safe characters before storage.
-// - Key files are always written with mode 0600 (owner-only) using install(1).
+// - Key files are always written with mode 0600 (owner-only).
 // - The API key is never passed as a curl command-line argument. It is read
 //   from a private file and piped to curl via --config stdin (-K -), keeping
 //   it out of /proc/*/cmdline for network operations.
 
 var API_BASE = "https://openapi.api.govee.com"
+
+function curlCommand(script, args) {
+  return ["bash", "-c", script, "govee"].concat(args)
+}
 
 // ─── API key storage ────────────────────────────────────────────────────────
 
@@ -75,11 +79,10 @@ function clearKeyCommand(home) {
 // The API key header is read from the private header file and piped to curl
 // via -K - (config from stdin) so it never appears in process arguments.
 function listDevicesCommand(headerFile) {
-  return [
-    "bash", "-c",
-    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -fsS --max-time 10 --max-filesize 1048576 -H "Content-Type: application/json" -K - "$2"',
-    "govee", headerFile, API_BASE + "/router/api/v1/user/devices"
-  ]
+  return curlCommand(
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -q --proto =https -fsS --max-time 10 --max-filesize 1048576 -H "Content-Type: application/json" -K - "$2"',
+    [headerFile, API_BASE + "/router/api/v1/user/devices"]
+  )
 }
 
 // Parse the /user/devices response into a flat array of device objects.
@@ -91,6 +94,21 @@ function parseDevicesResponse(raw) {
       return resp.data
   } catch (e) {}
   return []
+}
+
+// Return a safe user-facing error for a syntactically valid API failure.
+// An empty string means the response reports success.
+function responseError(raw) {
+  try {
+    var resp = JSON.parse(String(raw || ""))
+    if (resp && resp.code === 200) return ""
+    if (resp && (resp.code === 401 || resp.code === 403)) return "Authentication error — check your API key"
+    if (resp && resp.code === 429) return "Rate limited — wait a moment and try again"
+    if (resp && resp.code !== undefined) return "Govee API error (code " + String(resp.code).substring(0, 16) + ")"
+  } catch (e) {
+    return "Invalid response from Govee API"
+  }
+  return "Unexpected response from Govee API"
 }
 
 // ─── Device state ───────────────────────────────────────────────────────────
@@ -105,29 +123,29 @@ function deviceStateCommand(headerFile, sku, device) {
       device: device
     }
   })
-  return [
-    "bash", "-c",
-    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -sS --max-time 10 --max-filesize 1048576 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
-    "govee", headerFile, body, API_BASE + "/router/api/v1/device/state"
-  ]
+  return curlCommand(
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -q --proto =https -sS --max-time 10 --max-filesize 1048576 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
+    [headerFile, body, API_BASE + "/router/api/v1/device/state"]
+  )
 }
 
 // Parse device state response. Returns an object mapping instance names to
 // their current values, e.g. { powerSwitch: 1, brightness: 80 }.
 function parseDeviceState(raw) {
-  var state = {}
   try {
     var resp = JSON.parse(String(raw || ""))
     if (resp && resp.code === 200 && resp.payload && Array.isArray(resp.payload.capabilities)) {
+      var state = {}
       var caps = resp.payload.capabilities
       for (var i = 0; i < caps.length; i++) {
         var cap = caps[i]
         if (cap && cap.instance && cap.state !== undefined)
           state[cap.instance] = cap.state.value !== undefined ? cap.state.value : cap.state
       }
+      return state
     }
   } catch (e) {}
-  return state
+  return null
 }
 
 // ─── Device control ─────────────────────────────────────────────────────────
@@ -143,11 +161,10 @@ function controlCommand(headerFile, sku, device, capability) {
       capability: capability
     }
   })
-  return [
-    "bash", "-c",
-    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -fsS --max-time 10 --max-filesize 1048576 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
-    "govee", headerFile, body, API_BASE + "/router/api/v1/device/control"
-  ]
+  return curlCommand(
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -q --proto =https -fsS --max-time 10 --max-filesize 1048576 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
+    [headerFile, body, API_BASE + "/router/api/v1/device/control"]
+  )
 }
 
 // Convenience: power on/off command payload.
@@ -308,11 +325,10 @@ function dynamicScenesCommand(headerFile, sku, device) {
       device: device
     }
   })
-  return [
-    "bash", "-c",
-    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -sS --max-time 10 --max-filesize 1048576 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
-    "govee", headerFile, body, API_BASE + "/router/api/v1/device/scenes"
-  ]
+  return curlCommand(
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -q --proto =https -sS --max-time 10 --max-filesize 1048576 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
+    [headerFile, body, API_BASE + "/router/api/v1/device/scenes"]
+  )
 }
 
 // Parse dynamic scenes response. Returns an array of { name, value } where

@@ -149,9 +149,11 @@ Panel {
 
   function refresh() {
     if (!hasKey) return
+    if (listProc.running || stateProc.running || scenesProc.running) return
     // Don't show loading spinner on subsequent refreshes — only first load
     if (deviceModel.count === 0) loading = true
     errorText = ""
+    listProc.stderrText = ""
     listProc.command = Api.listDevicesCommand(headerFile)
     listProc.running = true
   }
@@ -165,6 +167,12 @@ Panel {
         var raw = String(text || "").substring(0, 1048576).trim()
         if (!raw) {
           root.errorText = listProc.stderrText || "No response from Govee API"
+          root.loading = false
+          return
+        }
+        var apiError = Api.responseError(raw)
+        if (apiError !== "") {
+          root.errorText = apiError
           root.loading = false
           return
         }
@@ -202,6 +210,7 @@ Panel {
 
   function buildModel(lights) {
     deviceModel.clear()
+    scenesLoaded = false
     // Destroy previously created dynamic scene models
     for (var d = 0; d < sceneModels.length; d++) {
       if (sceneModels[d]) sceneModels[d].destroy()
@@ -271,6 +280,7 @@ Panel {
   // Per-device scene values (objects like { paramId, id }) indexed by
   // position in sceneModels, then by ListModel row index.
   property var sceneValues: []
+  property bool scenesLoaded: false
 
   property int sceneIndex: 0
 
@@ -282,7 +292,10 @@ Panel {
   }
 
   function fetchNextScenes() {
-    if (sceneIndex >= deviceModel.count) return
+    if (sceneIndex >= deviceModel.count) {
+      scenesLoaded = true
+      return
+    }
     var item = deviceModel.get(sceneIndex)
     if (!item.hasScenes) {
       sceneIndex++
@@ -338,7 +351,7 @@ Panel {
   function fetchNextState() {
     if (stateIndex >= deviceModel.count) {
       // After all states fetched, fetch scenes only on first load
-      if (sceneModels.length === 0 || (sceneModels.length > 0 && sceneModels[0].count === 0 && deviceModel.count > 0))
+      if (!scenesLoaded && deviceModel.count > 0)
         fetchAllScenes()
       return
     }
@@ -355,6 +368,11 @@ Panel {
         var raw = String(text || "").substring(0, 1048576).trim()
         if (raw && root.stateIndex < deviceModel.count && !root.isControlInFlight(root.stateIndex)) {
           var parsed = Api.parseDeviceState(raw)
+          if (!parsed) {
+            root.stateIndex++
+            stateDelayTimer.restart()
+            return
+          }
           var item = deviceModel.get(root.stateIndex)
 
           // If device is offline, treat as off regardless of last-known state
@@ -412,7 +430,8 @@ Panel {
 
   // ─── Device control ─────────────────────────────────────────────────────
 
-  // Track which device indices have control commands in flight.
+  // Track the number of queued/running control commands per device. A count is
+  // necessary because sliders can enqueue several updates for the same device.
   property var controlInFlightDevices: ({})
 
   // Command queue: each entry is { command: [...], index: int }
@@ -422,7 +441,27 @@ Panel {
   property bool rateLimited: false
 
   function isControlInFlight(index) {
-    return controlInFlightDevices[index] === true
+    return (controlInFlightDevices[index] || 0) > 0
+  }
+
+  function incrementControlInFlight(index) {
+    var inflight = controlInFlightDevices
+    inflight[index] = (inflight[index] || 0) + 1
+    controlInFlightDevices = inflight
+  }
+
+  function decrementControlInFlight(index) {
+    var inflight = controlInFlightDevices
+    var remaining = (inflight[index] || 0) - 1
+    if (remaining > 0) inflight[index] = remaining
+    else delete inflight[index]
+    controlInFlightDevices = inflight
+  }
+
+  function discardQueuedControls() {
+    for (var i = 0; i < controlQueue.length; i++)
+      decrementControlInFlight(controlQueue[i].index)
+    controlQueue = []
   }
 
   // Reset the auto-refresh timer whenever the user interacts.
@@ -431,17 +470,16 @@ Panel {
   }
 
   function controlDevice(sku, device, capability, index) {
-    if (rateLimited) return  // Drop commands during backoff
+    if (rateLimited) return false  // Drop commands during backoff
 
-    var inflight = controlInFlightDevices
-    inflight[index] = true
-    controlInFlightDevices = inflight
+    incrementControlInFlight(index)
     resetRefreshTimer()
 
     var cmd = Api.controlCommand(headerFile, sku, device, capability)
     controlQueue.push({ command: cmd, index: index })
     controlQueue = controlQueue  // trigger change
     processControlQueue()
+    return true
   }
 
   function processControlQueue() {
@@ -457,28 +495,30 @@ Panel {
   function togglePower(index) {
     var item = deviceModel.get(index)
     var newState = !item.powerOn
-    controlDevice(item.sku, item.deviceId, Api.powerCapability(newState), index)
-    deviceModel.setProperty(index, "powerOn", newState)
+    if (controlDevice(item.sku, item.deviceId, Api.powerCapability(newState), index))
+      deviceModel.setProperty(index, "powerOn", newState)
   }
 
   function setBrightness(index, value) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.brightnessCapability(value), index)
-    deviceModel.setProperty(index, "brightness", value)
+    if (controlDevice(item.sku, item.deviceId, Api.brightnessCapability(value), index))
+      deviceModel.setProperty(index, "brightness", value)
   }
 
   function setColor(index, rgbInt) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.colorRgbCapability(rgbInt), index)
-    deviceModel.setProperty(index, "devColorRgb", rgbInt)
-    deviceModel.setProperty(index, "devActiveScene", -1)
+    if (controlDevice(item.sku, item.deviceId, Api.colorRgbCapability(rgbInt), index)) {
+      deviceModel.setProperty(index, "devColorRgb", rgbInt)
+      deviceModel.setProperty(index, "devActiveScene", -1)
+    }
   }
 
   function setColorTemp(index, kelvin) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.colorTemperatureCapability(kelvin), index)
-    deviceModel.setProperty(index, "devColorTempK", kelvin)
-    deviceModel.setProperty(index, "devActiveScene", -1)
+    if (controlDevice(item.sku, item.deviceId, Api.colorTemperatureCapability(kelvin), index)) {
+      deviceModel.setProperty(index, "devColorTempK", kelvin)
+      deviceModel.setProperty(index, "devActiveScene", -1)
+    }
   }
 
   function setScene(index, sceneIndex) {
@@ -486,21 +526,22 @@ Panel {
     var values = sceneValues[index]
     if (!values || sceneIndex < 0 || sceneIndex >= values.length) return
     var sceneValue = values[sceneIndex]
-    controlDevice(item.sku, item.deviceId, Api.lightSceneCapability(sceneValue), index)
-    deviceModel.setProperty(index, "devActiveScene", sceneIndex)
+    if (controlDevice(item.sku, item.deviceId, Api.lightSceneCapability(sceneValue), index))
+      deviceModel.setProperty(index, "devActiveScene", sceneIndex)
   }
 
   function setOscillation(index, on) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.oscillationCapability(on), index)
-    deviceModel.setProperty(index, "oscillation", on)
+    if (controlDevice(item.sku, item.deviceId, Api.oscillationCapability(on), index))
+      deviceModel.setProperty(index, "oscillation", on)
   }
 
   function setWorkMode(index, workMode, modeValue) {
     var item = deviceModel.get(index)
-    controlDevice(item.sku, item.deviceId, Api.workModeCapability(workMode, modeValue), index)
-    deviceModel.setProperty(index, "workMode", workMode)
-    deviceModel.setProperty(index, "modeValue", modeValue)
+    if (controlDevice(item.sku, item.deviceId, Api.workModeCapability(workMode, modeValue), index)) {
+      deviceModel.setProperty(index, "workMode", workMode)
+      deviceModel.setProperty(index, "modeValue", modeValue)
+    }
   }
 
   function setMusicMode(index, musicMode, sensitivity, autoColor, rgb) {
@@ -521,7 +562,7 @@ Panel {
           if (err.indexOf("429") >= 0) {
             root.showNotification("Rate limited — too many requests. Wait a moment before trying again.")
             // Clear pending commands and pause for 5 seconds
-            root.controlQueue = []
+            root.discardQueuedControls()
             root.rateLimited = true
             rateLimitTimer.restart()
           } else if (err.indexOf("401") >= 0 || err.indexOf("403") >= 0)
@@ -533,9 +574,7 @@ Panel {
     }
     onExited: function(exitCode) {
       if (controlProc.controlIndex >= 0) {
-        var inflight = root.controlInFlightDevices
-        delete inflight[controlProc.controlIndex]
-        root.controlInFlightDevices = inflight
+        root.decrementControlInFlight(controlProc.controlIndex)
       }
       controlProc.controlIndex = -1
       root.processControlQueue()

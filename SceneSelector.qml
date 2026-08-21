@@ -12,7 +12,6 @@ Item {
   property var bar: null
   property var scenes: null          // ListModel with { name, value }
   property int activeScene: -1       // Currently active scene index, or -1
-  property bool enabled: true
 
   signal scenePicked(int sceneValue)
 

@@ -43,13 +43,6 @@ Control Govee smart lights and fans from the Omarchy desktop bar.
 omarchy plugin add https://github.com/mlambert-uk/omarchy-govee.git --enable
 ```
 
-Or for local development:
-
-```bash
-ln -s /path/to/omarchy-govee ~/.config/omarchy/plugins/mlambert-uk.govee
-omarchy plugin enable mlambert-uk.govee
-```
-
 ## Removal
 
 ```bash
@@ -130,13 +123,6 @@ Any Govee device with a power switch is shown. Tested with:
 - **H70C4** — RGBWIC string lights (color, scenes, music mode)
 - **H7075** — Smart LED downlight (color, scenes, music mode)
 - **H7107** — Tower fan (oscillation, work modes, speed)
-
-## Security
-
-- The API key is stored with mode `0600` (owner-only read/write)
-- A separate private header file is used for curl requests — the key never appears in process arguments or `/proc/*/cmdline`
-- Key files are written atomically via temporary file + rename to prevent partial reads
-- API key input is validated to contain only safe characters (letters, digits, dashes) to prevent injection
 
 ## Known Limitations
 

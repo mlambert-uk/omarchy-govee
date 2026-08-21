@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "mlambert-uk.govee",
   "name": "Govee Lights",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "author": "Mark Lambert",
   "license": "MIT",
   "description": "Control Govee smart lights and fans from the desktop. Discover devices, toggle power, adjust brightness, color, scenes, and fan modes from a bar widget panel.",

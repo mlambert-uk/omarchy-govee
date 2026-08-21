@@ -24,6 +24,11 @@ Item {
   property int activeCategory: 0
   property int expandedGroup: -1
 
+  // Rebuild categories when:
+  // 1. The scenes property itself changes (different model assigned)
+  // 2. On initial creation (model may already be populated)
+  // 3. When items are added/removed from the current model (ListModel mutations
+  //    don't trigger onScenesChanged since the object reference is unchanged)
   onScenesChanged: buildCategories()
   Component.onCompleted: buildCategories()
 
@@ -166,6 +171,7 @@ Item {
             id: catTabText
             anchors.centerIn: parent
             text: cat.label + " (" + cat.count + ")"
+            textFormat: Text.PlainText
             color: index === root.activeCategory ? "#ffffff" : root.fg
             font.family: root.fontFam
             font.pixelSize: Style.font.caption
@@ -247,6 +253,7 @@ Item {
 
               Text {
                 text: group.label
+                textFormat: Text.PlainText
                 color: {
                   if (groupDelegate.isSingle && group.items[0].value === root.activeScene)
                     return "#ffffff"
@@ -324,6 +331,7 @@ Item {
                   id: variantText
                   anchors.centerIn: parent
                   text: sceneItem.name
+                  textFormat: Text.PlainText
                   color: sceneItem.value === root.activeScene ? "#ffffff" : root.fg
                   font.family: root.fontFam
                   font.pixelSize: Style.font.caption

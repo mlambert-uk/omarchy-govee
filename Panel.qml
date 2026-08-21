@@ -24,6 +24,9 @@ Panel {
   property string setupError: ""
   property bool credentialMigrationAttempted: false
 
+  readonly property color fg: bar ? bar.foreground : "#ffffff"
+  readonly property string fontFam: bar ? bar.fontFamily : ""
+
   // Path to the private header file used by curl commands (never contains the
   // key in process argv — it is read from this file at runtime).
   readonly property string headerFile: Api.headerFilePath(Quickshell.env("HOME"))
@@ -159,7 +162,7 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var raw = String(text || "").trim()
+        var raw = String(text || "").substring(0, 1048576).trim()
         if (!raw) {
           root.errorText = listProc.stderrText || "No response from Govee API"
           root.loading = false
@@ -179,7 +182,7 @@ Panel {
     }
     stderr: StdioCollector {
       waitForEnd: true
-      onStreamFinished: { listProc.stderrText = String(text || "").trim() }
+      onStreamFinished: { listProc.stderrText = String(text || "").substring(0, 1024).trim() }
     }
     onExited: function(exitCode) {
       if (exitCode !== 0 && !stderrText)
@@ -199,6 +202,10 @@ Panel {
 
   function buildModel(lights) {
     deviceModel.clear()
+    // Destroy previously created dynamic scene models
+    for (var d = 0; d < sceneModels.length; d++) {
+      if (sceneModels[d]) sceneModels[d].destroy()
+    }
     var models = []
     for (var i = 0; i < lights.length; i++) {
       var dev = lights[i]
@@ -233,7 +240,8 @@ Panel {
         devActiveScene: -1,
         oscillation: false,
         workMode: 0,
-        modeValue: 0
+        modeValue: 0,
+        deviceOnline: true
       })
 
       // Create an empty scene model; populated later by fetchScenes
@@ -290,7 +298,7 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var raw = String(text || "").trim()
+        var raw = String(text || "").substring(0, 1048576).trim()
         if (raw && root.sceneIndex < deviceModel.count) {
           var scenes = Api.parseDynamicScenes(raw)
           var model = root.sceneModels[root.sceneIndex]
@@ -344,7 +352,7 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var raw = String(text || "").trim()
+        var raw = String(text || "").substring(0, 1048576).trim()
         if (raw && root.stateIndex < deviceModel.count && !root.isControlInFlight(root.stateIndex)) {
           var parsed = Api.parseDeviceState(raw)
           var item = deviceModel.get(root.stateIndex)
@@ -355,6 +363,8 @@ Panel {
           var bri = parsed.brightness !== undefined ? parsed.brightness : 100
 
           // Only update properties that actually changed
+          if (item.deviceOnline !== isOnline)
+            deviceModel.setProperty(root.stateIndex, "deviceOnline", isOnline)
           if (item.powerOn !== isOn)
             deviceModel.setProperty(root.stateIndex, "powerOn", isOn)
           if (item.brightness !== bri)
@@ -388,7 +398,7 @@ Panel {
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var err = String(text || "").trim()
+        var err = String(text || "").substring(0, 1024).trim()
         if (err) console.warn("Govee state poll error:", err)
       }
     }
@@ -408,6 +418,9 @@ Panel {
   // Command queue: each entry is { command: [...], index: int }
   property var controlQueue: []
 
+  // Rate-limit backoff: when true, new commands are dropped until the timer fires.
+  property bool rateLimited: false
+
   function isControlInFlight(index) {
     return controlInFlightDevices[index] === true
   }
@@ -418,6 +431,8 @@ Panel {
   }
 
   function controlDevice(sku, device, capability, index) {
+    if (rateLimited) return  // Drop commands during backoff
+
     var inflight = controlInFlightDevices
     inflight[index] = true
     controlInFlightDevices = inflight
@@ -431,7 +446,7 @@ Panel {
 
   function processControlQueue() {
     if (controlProc.running) return
-    if (controlQueue.length === 0) return
+    if (rateLimited || controlQueue.length === 0) return
     var next = controlQueue.shift()
     controlQueue = controlQueue  // trigger change
     controlProc.controlIndex = next.index
@@ -500,8 +515,20 @@ Panel {
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var err = String(text || "").trim()
-        if (err) console.warn("Govee control error:", err)
+        var err = String(text || "").substring(0, 1024).trim()
+        if (err) {
+          console.warn("Govee control error:", err)
+          if (err.indexOf("429") >= 0) {
+            root.showNotification("Rate limited — too many requests. Wait a moment before trying again.")
+            // Clear pending commands and pause for 5 seconds
+            root.controlQueue = []
+            root.rateLimited = true
+            rateLimitTimer.restart()
+          } else if (err.indexOf("401") >= 0 || err.indexOf("403") >= 0)
+            root.showNotification("Authentication error — check your API key.")
+          else
+            root.showNotification("Command failed — check your network connection.")
+        }
       }
     }
     onExited: function(exitCode) {
@@ -511,6 +538,25 @@ Panel {
         root.controlInFlightDevices = inflight
       }
       controlProc.controlIndex = -1
+      root.processControlQueue()
+    }
+  }
+
+  function showNotification(message) {
+    notifyProc.command = ["notify-send", "-u", "low", "-a", "Govee", "Govee", message]
+    notifyProc.running = true
+  }
+
+  Process {
+    id: notifyProc
+    running: false
+  }
+
+  Timer {
+    id: rateLimitTimer
+    interval: 5000
+    onTriggered: {
+      root.rateLimited = false
       root.processControlQueue()
     }
   }
@@ -583,16 +629,16 @@ Panel {
 
             Text {
               text: "\u{F0335}"
-              color: root.bar ? root.bar.foreground : "#ffffff"
-              font.family: root.bar ? root.bar.fontFamily : ""
+              color: root.fg
+              font.family: root.fontFam
               font.pixelSize: Style.font.display
               anchors.verticalCenter: parent.verticalCenter
             }
 
             Text {
               text: "Govee Lights"
-              color: root.bar ? root.bar.foreground : "#ffffff"
-              font.family: root.bar ? root.bar.fontFamily : ""
+              color: root.fg
+              font.family: root.fontFam
               font.pixelSize: Style.font.title
               font.bold: true
               anchors.verticalCenter: parent.verticalCenter
@@ -603,7 +649,7 @@ Panel {
           Rectangle {
             width: parent.width
             height: Style.spacing.hairline
-            color: root.bar ? root.bar.foreground : "#ffffff"
+            color: root.fg
             opacity: 0.12
           }
 
@@ -618,8 +664,8 @@ Panel {
             Text {
               width: parent.width - Style.space(32)
               text: "To get started, you need a Govee API key:"
-              color: root.bar ? root.bar.foreground : "#ffffff"
-              font.family: root.bar ? root.bar.fontFamily : ""
+              color: root.fg
+              font.family: root.fontFam
               font.pixelSize: Style.font.body
               wrapMode: Text.WordWrap
             }
@@ -630,26 +676,26 @@ Panel {
 
               Text {
                 text: "1. Open the Govee Home app on your phone"
-                color: Qt.darker(root.bar ? root.bar.foreground : "#ffffff", 1.3)
-                font.family: root.bar ? root.bar.fontFamily : ""
+                color: Qt.darker(root.fg, 1.3)
+                font.family: root.fontFam
                 font.pixelSize: Style.font.bodySmall
               }
               Text {
                 text: "2. Go to Settings (profile icon)"
-                color: Qt.darker(root.bar ? root.bar.foreground : "#ffffff", 1.3)
-                font.family: root.bar ? root.bar.fontFamily : ""
+                color: Qt.darker(root.fg, 1.3)
+                font.family: root.fontFam
                 font.pixelSize: Style.font.bodySmall
               }
               Text {
                 text: "3. Tap \"About Us\" then \"Apply for API Key\""
-                color: Qt.darker(root.bar ? root.bar.foreground : "#ffffff", 1.3)
-                font.family: root.bar ? root.bar.fontFamily : ""
+                color: Qt.darker(root.fg, 1.3)
+                font.family: root.fontFam
                 font.pixelSize: Style.font.bodySmall
               }
               Text {
                 text: "4. Copy the key and paste it below"
-                color: Qt.darker(root.bar ? root.bar.foreground : "#ffffff", 1.3)
-                font.family: root.bar ? root.bar.fontFamily : ""
+                color: Qt.darker(root.fg, 1.3)
+                font.family: root.fontFam
                 font.pixelSize: Style.font.bodySmall
               }
             }
@@ -661,8 +707,8 @@ Panel {
                 id: apiKeyField
                 width: Style.space(240)
                 placeholderText: "Paste your API key"
-                foreground: root.bar ? root.bar.foreground : "#ffffff"
-                font.family: root.bar ? root.bar.fontFamily : ""
+                foreground: root.fg
+                font.family: root.fontFam
 
                 Keys.onPressed: function(event) {
                   if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
@@ -679,7 +725,7 @@ Panel {
                 width: saveLabel.implicitWidth + Style.space(16)
                 height: apiKeyField.height
                 radius: Style.cornerRadius
-                color: saveArea.containsMouse ? Style.hoverFillFor(root.bar ? root.bar.foreground : "#ffffff", Color.accent) : Color.accent
+                color: saveArea.containsMouse ? Style.hoverFillFor(root.fg, Color.accent) : Color.accent
                 anchors.verticalCenter: apiKeyField.verticalCenter
 
                 Text {
@@ -687,7 +733,7 @@ Panel {
                   anchors.centerIn: parent
                   text: "Save"
                   color: "#ffffff"
-                  font.family: root.bar ? root.bar.fontFamily : ""
+                  font.family: root.fontFam
                   font.pixelSize: Style.font.body
                 }
 
@@ -704,8 +750,9 @@ Panel {
             Text {
               visible: root.setupError !== ""
               text: root.setupError
+              textFormat: Text.PlainText
               color: "#ff6b6b"
-              font.family: root.bar ? root.bar.fontFamily : ""
+              font.family: root.fontFam
               font.pixelSize: Style.font.bodySmall
             }
           }
@@ -715,8 +762,8 @@ Panel {
             visible: root.loading && !root.setupMode
             anchors.horizontalCenter: parent.horizontalCenter
             text: "Loading devices..."
-            color: Qt.darker(root.bar ? root.bar.foreground : "#ffffff", 1.4)
-            font.family: root.bar ? root.bar.fontFamily : ""
+            color: Qt.darker(root.fg, 1.4)
+            font.family: root.fontFam
             font.pixelSize: Style.font.body
             font.italic: true
           }
@@ -729,8 +776,9 @@ Panel {
             anchors.right: parent.right
             anchors.rightMargin: Style.space(16)
             text: root.errorText
+            textFormat: Text.PlainText
             color: "#ff6b6b"
-            font.family: root.bar ? root.bar.fontFamily : ""
+            font.family: root.fontFam
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
           }
@@ -740,8 +788,8 @@ Panel {
             visible: !root.loading && !root.setupMode && root.hasKey && deviceModel.count === 0 && root.errorText === ""
             anchors.horizontalCenter: parent.horizontalCenter
             text: "No light devices found"
-            color: Qt.darker(root.bar ? root.bar.foreground : "#ffffff", 1.4)
-            font.family: root.bar ? root.bar.fontFamily : ""
+            color: Qt.darker(root.fg, 1.4)
+            font.family: root.fontFam
             font.pixelSize: Style.font.body
           }
 
@@ -778,6 +826,7 @@ Panel {
                 required property bool oscillation
                 required property int workMode
                 required property int modeValue
+                required property bool deviceOnline
 
                 width: parent.width
                 isOn: powerOn
@@ -801,10 +850,11 @@ Panel {
                 deviceIsFan: isFan
                 bar: root.bar
                 sceneModel: root.sceneModels.length > index ? root.sceneModels[index] : null
-                sceneActive: devActiveScene
+                activeScene: devActiveScene
                 workModeOptions: root.workModeOptions.length > index ? root.workModeOptions[index] : null
                 musicModeOptions: root.musicModeOptions.length > index ? root.musicModeOptions[index] : null
                 showMusic: hasMusic
+                online: deviceOnline
 
                 onTogglePower: root.togglePower(index)
                 onSetBrightness: function(value) { root.setBrightness(index, value) }
@@ -826,16 +876,16 @@ Panel {
 
             Text {
               text: "API key configured"
-              color: Qt.darker(root.bar ? root.bar.foreground : "#ffffff", 1.5)
-              font.family: root.bar ? root.bar.fontFamily : ""
+              color: Qt.darker(root.fg, 1.5)
+              font.family: root.fontFam
               font.pixelSize: Style.font.caption
               anchors.verticalCenter: parent.verticalCenter
             }
 
             Text {
               text: "\u00b7 Reset"
-              color: Qt.darker(root.bar ? root.bar.foreground : "#ffffff", 1.3)
-              font.family: root.bar ? root.bar.fontFamily : ""
+              color: Qt.darker(root.fg, 1.3)
+              font.family: root.fontFam
               font.pixelSize: Style.font.caption
               anchors.verticalCenter: parent.verticalCenter
 

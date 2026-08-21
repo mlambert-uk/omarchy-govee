@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Layouts
 import qs.Commons
 import qs.Ui
 import "GoveeApi.js" as Api
@@ -22,7 +21,7 @@ Item {
   property string skuLabel: ""
   property var bar: null
   property var sceneModel: null
-  property int sceneActive: -1
+  property int activeScene: -1
   property bool deviceIsFan: false
   property bool showOscillation: false
   property bool showWorkMode: false
@@ -33,6 +32,7 @@ Item {
   property int fanModeValue: 0
   property var workModeOptions: null  // { modes: [{name, value, speeds}], maxSpeed }
   property var musicModeOptions: null // [{name, value}] array
+  property bool online: true
 
   // Expanded state for inline controls
   property bool colorExpanded: false
@@ -70,7 +70,18 @@ Item {
     return Qt.rgba(c.r / 255, c.g / 255, c.b / 255, 1)
   }
 
+  // Whether the currently active work mode supports speed adjustment.
+  readonly property bool activeWorkModeHasSpeed: {
+    if (!workModeOptions) return false
+    for (var i = 0; i < workModeOptions.modes.length; i++) {
+      if (workModeOptions.modes[i].value === fanWorkMode)
+        return workModeOptions.modes[i].speeds > 0
+    }
+    return false
+  }
+
   implicitHeight: cardColumn.implicitHeight + Style.space(16)
+  opacity: root.online ? 1.0 : 0.4
 
   Rectangle {
     anchors.fill: parent
@@ -107,15 +118,28 @@ Item {
       // Device name
       Text {
         text: root.name
+        textFormat: Text.PlainText
         color: root.fg
         font.family: root.fontFam
         font.pixelSize: Style.font.body
         elide: Text.ElideRight
-        width: parent.width - powerButton.width - Style.space(26)
+        width: parent.width - powerButton.width - (root.online ? 0 : offlineLabel.implicitWidth + Style.space(10)) - Style.space(26)
         anchors.verticalCenter: parent.verticalCenter
       }
 
-      // Power toggle button
+      // Offline indicator
+      Text {
+        id: offlineLabel
+        visible: !root.online
+        text: "Offline"
+        color: Qt.darker(root.fg, 1.6)
+        font.family: root.fontFam
+        font.pixelSize: Style.font.caption
+        font.italic: true
+        anchors.verticalCenter: parent.verticalCenter
+      }
+
+      // Power toggle button (larger than standard ToggleSwitch, kept inline)
       Rectangle {
         id: powerButton
         width: Style.space(36)
@@ -140,7 +164,8 @@ Item {
         MouseArea {
           anchors.fill: parent
           hoverEnabled: true
-          cursorShape: Qt.PointingHandCursor
+          cursorShape: root.online ? Qt.PointingHandCursor : Qt.ArrowCursor
+          enabled: root.online
           onClicked: root.togglePower()
         }
       }
@@ -154,6 +179,7 @@ Item {
 
       Text {
         text: root.skuLabel
+        textFormat: Text.PlainText
         color: Qt.darker(root.fg, 1.6)
         font.family: root.fontFam
         font.pixelSize: Style.font.caption
@@ -293,63 +319,15 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
       }
 
-      Item {
-        id: sliderContainer
+      SliderControl {
         width: parent.width - Style.space(80)
-        height: Style.space(20)
         anchors.verticalCenter: parent.verticalCenter
-
-        Rectangle {
-          anchors.left: parent.left
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          height: Style.space(4)
-          radius: height / 2
-          color: Qt.darker(root.fg, 2.5)
-
-          Rectangle {
-            width: parent.width * (root.deviceBrightness / 100)
-            height: parent.height
-            radius: parent.radius
-            color: root.isOn ? Color.accent : Qt.darker(root.fg, 1.5)
-            Behavior on width { NumberAnimation { duration: 80 } }
-            Behavior on color { ColorAnimation { duration: 150 } }
-          }
-        }
-
-        Rectangle {
-          id: sliderKnob
-          width: Style.space(14)
-          height: Style.space(14)
-          radius: width / 2
-          color: root.isOn ? Color.accent : Qt.darker(root.fg, 1.5)
-          border.width: 2
-          border.color: "#ffffff"
-          anchors.verticalCenter: parent.verticalCenter
-          x: (sliderContainer.width - width) * (root.deviceBrightness / 100)
-          Behavior on x { enabled: !sliderMouse.pressed; NumberAnimation { duration: 80 } }
-          Behavior on color { ColorAnimation { duration: 150 } }
-        }
-
-        MouseArea {
-          id: sliderMouse
-          anchors.fill: parent
-          hoverEnabled: true
-          cursorShape: Qt.PointingHandCursor
-          enabled: root.isOn
-
-          onPressed: function(mouse) { updateBrightness(mouse.x) }
-          onPositionChanged: function(mouse) { if (pressed) updateBrightness(mouse.x) }
-          onReleased: function(mouse) {
-            var value = Math.max(1, Math.min(100, Math.round((mouse.x / sliderContainer.width) * 100)))
-            root.setBrightness(value)
-          }
-
-          function updateBrightness(mouseX) {
-            var value = Math.max(1, Math.min(100, Math.round((mouseX / sliderContainer.width) * 100)))
-            sliderKnob.x = (sliderContainer.width - sliderKnob.width) * (value / 100)
-          }
-        }
+        value: root.deviceBrightness
+        minValue: 1
+        maxValue: 100
+        enabled: root.isOn
+        fg: root.fg
+        onSliderMoved: function(val) { root.setBrightness(val) }
       }
 
       Text {
@@ -388,33 +366,13 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
       }
 
-      Rectangle {
+      GoveeToggle {
         id: oscToggle
-        width: Style.space(32)
-        height: Style.space(18)
-        radius: height / 2
-        color: root.fanOscillation ? Color.accent : Qt.darker(root.fg, 2.5)
+        checked: root.fanOscillation
+        enabled: root.isOn
+        fg: root.fg
         anchors.verticalCenter: parent.verticalCenter
-
-        Behavior on color { ColorAnimation { duration: 150 } }
-
-        Rectangle {
-          width: Style.space(14)
-          height: Style.space(14)
-          radius: width / 2
-          color: "#ffffff"
-          anchors.verticalCenter: parent.verticalCenter
-          x: root.fanOscillation ? parent.width - width - Style.space(2) : Style.space(2)
-          Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.InOutQuad } }
-        }
-
-        MouseArea {
-          anchors.fill: parent
-          hoverEnabled: true
-          cursorShape: root.isOn ? Qt.PointingHandCursor : Qt.ArrowCursor
-          enabled: root.isOn
-          onClicked: root.setOscillation(!root.fanOscillation)
-        }
+        onToggled: root.setOscillation(!root.fanOscillation)
       }
     }
 
@@ -453,6 +411,7 @@ Item {
               id: modeText
               anchors.centerIn: parent
               text: mode.name
+              textFormat: Text.PlainText
               color: isActive ? "#ffffff" : root.fg
               font.family: root.fontFam
               font.pixelSize: Style.font.bodySmall
@@ -477,14 +436,7 @@ Item {
 
       // Speed slider (only for modes that have speed options)
       Row {
-        visible: {
-          if (!root.workModeOptions) return false
-          for (var i = 0; i < root.workModeOptions.modes.length; i++) {
-            if (root.workModeOptions.modes[i].value === root.fanWorkMode)
-              return root.workModeOptions.modes[i].speeds > 0
-          }
-          return false
-        }
+        visible: root.activeWorkModeHasSpeed
         width: parent.width
         spacing: Style.space(10)
 
@@ -496,61 +448,15 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
         }
 
-        Item {
-          id: speedSliderContainer
+        SliderControl {
           width: parent.width - Style.space(80)
-          height: Style.space(20)
           anchors.verticalCenter: parent.verticalCenter
-
-          Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            height: Style.space(4)
-            radius: height / 2
-            color: Qt.darker(root.fg, 2.5)
-
-            Rectangle {
-              width: root.fanMaxSpeed > 0 ? parent.width * (root.fanModeValue / root.fanMaxSpeed) : 0
-              height: parent.height
-              radius: parent.radius
-              color: root.isOn ? Color.accent : Qt.darker(root.fg, 1.5)
-              Behavior on width { NumberAnimation { duration: 80 } }
-            }
-          }
-
-          Rectangle {
-            id: speedKnob
-            width: Style.space(14)
-            height: Style.space(14)
-            radius: width / 2
-            color: root.isOn ? Color.accent : Qt.darker(root.fg, 1.5)
-            border.width: 2
-            border.color: "#ffffff"
-            anchors.verticalCenter: parent.verticalCenter
-            x: root.fanMaxSpeed > 0 ? (speedSliderContainer.width - width) * (root.fanModeValue / root.fanMaxSpeed) : 0
-            Behavior on x { enabled: !speedMouse.pressed; NumberAnimation { duration: 80 } }
-          }
-
-          MouseArea {
-            id: speedMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: root.isOn ? Qt.PointingHandCursor : Qt.ArrowCursor
-            enabled: root.isOn
-
-            onPressed: function(mouse) { updateSpeed(mouse.x) }
-            onPositionChanged: function(mouse) { if (pressed) updateSpeed(mouse.x) }
-            onReleased: function(mouse) {
-              var value = Math.max(1, Math.min(root.fanMaxSpeed, Math.round((mouse.x / speedSliderContainer.width) * root.fanMaxSpeed)))
-              root.setWorkMode(root.fanWorkMode, value)
-            }
-
-            function updateSpeed(mouseX) {
-              var value = Math.max(1, Math.min(root.fanMaxSpeed, Math.round((mouseX / speedSliderContainer.width) * root.fanMaxSpeed)))
-              speedKnob.x = (speedSliderContainer.width - speedKnob.width) * (value / root.fanMaxSpeed)
-            }
-          }
+          value: root.fanModeValue
+          minValue: 1
+          maxValue: root.fanMaxSpeed
+          enabled: root.isOn
+          fg: root.fg
+          onSliderMoved: function(val) { root.setWorkMode(root.fanWorkMode, val) }
         }
 
         Text {
@@ -648,6 +554,25 @@ Item {
           }
         }
       }
+
+      // Collapse chevron
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: "\u{F0143}"
+        color: collapseColorArea.containsMouse ? root.fg : Qt.darker(root.fg, 1.5)
+        font.family: root.fontFam
+        font.pixelSize: Style.font.body
+        Behavior on color { ColorAnimation { duration: 100 } }
+
+        MouseArea {
+          id: collapseColorArea
+          anchors.fill: parent
+          anchors.margins: -Style.space(4)
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.colorExpanded = false
+        }
+      }
     }
 
     // ── Scenes list (expandable) ──
@@ -668,9 +593,28 @@ Item {
         width: parent.width
         bar: root.bar
         scenes: root.sceneModel
-        activeScene: root.sceneActive
+        activeScene: root.activeScene
         enabled: root.isOn
         onScenePicked: function(sceneValue) { root.setScene(sceneValue) }
+      }
+
+      // Collapse chevron
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: "\u{F0143}"
+        color: collapseScenesArea.containsMouse ? root.fg : Qt.darker(root.fg, 1.5)
+        font.family: root.fontFam
+        font.pixelSize: Style.font.body
+        Behavior on color { ColorAnimation { duration: 100 } }
+
+        MouseArea {
+          id: collapseScenesArea
+          anchors.fill: parent
+          anchors.margins: -Style.space(4)
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.scenesExpanded = false
+        }
       }
     }
 
@@ -717,6 +661,7 @@ Item {
               id: mmText
               anchors.centerIn: parent
               text: mode.name
+              textFormat: Text.PlainText
               color: isActive ? "#ffffff" : root.fg
               font.family: root.fontFam
               font.pixelSize: Style.font.bodySmall
@@ -750,61 +695,18 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
         }
 
-        Item {
-          id: sensSliderContainer
+        SliderControl {
           width: parent.width - Style.space(110)
-          height: Style.space(20)
           anchors.verticalCenter: parent.verticalCenter
-
-          Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            height: Style.space(4)
-            radius: height / 2
-            color: Qt.darker(root.fg, 2.5)
-
-            Rectangle {
-              width: parent.width * (root.musicSensitivity / 100)
-              height: parent.height
-              radius: parent.radius
-              color: Color.accent
-              Behavior on width { NumberAnimation { duration: 80 } }
-            }
-          }
-
-          Rectangle {
-            id: sensKnob
-            width: Style.space(14)
-            height: Style.space(14)
-            radius: width / 2
-            color: Color.accent
-            border.width: 2
-            border.color: "#ffffff"
-            anchors.verticalCenter: parent.verticalCenter
-            x: (sensSliderContainer.width - width) * (root.musicSensitivity / 100)
-            Behavior on x { enabled: !sensMouse.pressed; NumberAnimation { duration: 80 } }
-          }
-
-          MouseArea {
-            id: sensMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-
-            onPressed: function(mouse) { updateSens(mouse.x) }
-            onPositionChanged: function(mouse) { if (pressed) updateSens(mouse.x) }
-            onReleased: function(mouse) {
-              var value = Math.max(0, Math.min(100, Math.round((mouse.x / sensSliderContainer.width) * 100)))
-              root.musicSensitivity = value
-              if (root.musicSelectedMode >= 0)
-                root.setMusicMode(root.musicSelectedMode, root.musicSensitivity, root.musicAutoColor, root.musicRgb)
-            }
-
-            function updateSens(mouseX) {
-              var value = Math.max(0, Math.min(100, Math.round((mouseX / sensSliderContainer.width) * 100)))
-              sensKnob.x = (sensSliderContainer.width - sensKnob.width) * (value / 100)
-            }
+          value: root.musicSensitivity
+          minValue: 0
+          maxValue: 100
+          enabled: true
+          fg: root.fg
+          onSliderMoved: function(val) {
+            root.musicSensitivity = val
+            if (root.musicSelectedMode >= 0)
+              root.setMusicMode(root.musicSelectedMode, root.musicSensitivity, root.musicAutoColor, root.musicRgb)
           }
         }
 
@@ -843,35 +745,16 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
         }
 
-        Rectangle {
+        GoveeToggle {
           id: autoColorToggle
-          width: Style.space(32)
-          height: Style.space(18)
-          radius: height / 2
-          color: root.musicAutoColor ? Color.accent : Qt.darker(root.fg, 2.5)
+          checked: root.musicAutoColor
+          enabled: true
+          fg: root.fg
           anchors.verticalCenter: parent.verticalCenter
-
-          Behavior on color { ColorAnimation { duration: 150 } }
-
-          Rectangle {
-            width: Style.space(14)
-            height: Style.space(14)
-            radius: width / 2
-            color: "#ffffff"
-            anchors.verticalCenter: parent.verticalCenter
-            x: root.musicAutoColor ? parent.width - width - Style.space(2) : Style.space(2)
-            Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.InOutQuad } }
-          }
-
-          MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-              root.musicAutoColor = !root.musicAutoColor
-              if (root.musicSelectedMode >= 0)
-                root.setMusicMode(root.musicSelectedMode, root.musicSensitivity, root.musicAutoColor, root.musicRgb)
-            }
+          onToggled: {
+            root.musicAutoColor = !root.musicAutoColor
+            if (root.musicSelectedMode >= 0)
+              root.setMusicMode(root.musicSelectedMode, root.musicSensitivity, root.musicAutoColor, root.musicRgb)
           }
         }
       }
@@ -899,6 +782,25 @@ Item {
             if (root.musicSelectedMode >= 0)
               root.setMusicMode(root.musicSelectedMode, root.musicSensitivity, root.musicAutoColor, root.musicRgb)
           }
+        }
+      }
+
+      // Collapse chevron
+      Text {
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: "\u{F0143}"
+        color: collapseMusicArea.containsMouse ? root.fg : Qt.darker(root.fg, 1.5)
+        font.family: root.fontFam
+        font.pixelSize: Style.font.body
+        Behavior on color { ColorAnimation { duration: 100 } }
+
+        MouseArea {
+          id: collapseMusicArea
+          anchors.fill: parent
+          anchors.margins: -Style.space(4)
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: root.musicExpanded = false
         }
       }
     }

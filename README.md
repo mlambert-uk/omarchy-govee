@@ -22,10 +22,12 @@ Control Govee smart lights and fans from the Omarchy desktop bar.
 
 **UX:**
 - Devices that are off show only name + power toggle
-- Offline/unplugged devices detected and shown as off
+- Offline/unplugged devices greyed out with "Offline" label — power toggle disabled
+- Expandable sections (color, scenes, music) have a collapse chevron for easy dismissal
 - Smart refresh — no flicker, diff-only state updates, timer resets on interaction
 - Device groups (BaseGroup, SameModeGroup) filtered out
 - Auto-refresh every 30 seconds while panel is open
+- Rate-limit detection with 5-second backoff and notification
 - Middle-click bar icon to force refresh
 
 ## Requirements
@@ -98,6 +100,8 @@ mlambert-uk.govee/
 ├── DeviceCard.qml       # Per-device card (power, brightness, color, fan, music)
 ├── ColorPicker.qml      # HSV color picker component
 ├── SceneSelector.qml    # Categorized scene browser with grouped variants
+├── SliderControl.qml    # Reusable horizontal slider with animated knob
+├── GoveeToggle.qml      # Small toggle switch component
 ├── GoveeApi.js          # API helpers (commands, parsing, color math)
 ├── LICENSE              # MIT License
 └── README.md            # This file
@@ -127,11 +131,18 @@ Any Govee device with a power switch is shown. Tested with:
 - **H7075** — Smart LED downlight (color, scenes, music mode)
 - **H7107** — Tower fan (oscillation, work modes, speed)
 
+## Security
+
+- The API key is stored with mode `0600` (owner-only read/write)
+- A separate private header file is used for curl requests — the key never appears in process arguments or `/proc/*/cmdline`
+- Key files are written atomically via temporary file + rename to prevent partial reads
+- API key input is validated to contain only safe characters (letters, digits, dashes) to prevent injection
+
 ## Known Limitations
 
 - The Govee API does not expose which scene is currently active — only scenes set from this plugin are highlighted
 - Some device features (e.g. H7107 night light) are not exposed by the Govee cloud API
-- Offline devices show as off — commands sent to them will silently fail
+- Offline devices are greyed out and non-interactive — commands cannot be sent to them
 - Music mode uses the device's built-in microphone, not desktop audio
 
 ## License

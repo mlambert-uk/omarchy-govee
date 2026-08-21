@@ -34,10 +34,6 @@ function parseKeyFile(raw) {
   return ""
 }
 
-function keyFileContents(apiKey) {
-  return JSON.stringify({ apiKey: apiKey }, null, 2)
-}
-
 // Validate that an API key contains only safe characters.
 // Govee API keys are UUID-formatted hex strings with dashes.
 // Rejecting anything else prevents curl config injection and shell escaping issues.
@@ -81,7 +77,7 @@ function clearKeyCommand(home) {
 function listDevicesCommand(headerFile) {
   return [
     "bash", "-c",
-    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -fsS --max-time 10 -H "Content-Type: application/json" -K - "$2"',
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -fsS --max-time 10 --max-filesize 1048576 -H "Content-Type: application/json" -K - "$2"',
     "govee", headerFile, API_BASE + "/router/api/v1/user/devices"
   ]
 }
@@ -111,7 +107,7 @@ function deviceStateCommand(headerFile, sku, device) {
   })
   return [
     "bash", "-c",
-    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -sS --max-time 10 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -sS --max-time 10 --max-filesize 1048576 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
     "govee", headerFile, body, API_BASE + "/router/api/v1/device/state"
   ]
 }
@@ -149,7 +145,7 @@ function controlCommand(headerFile, sku, device, capability) {
   })
   return [
     "bash", "-c",
-    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -fsS --max-time 10 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -fsS --max-time 10 --max-filesize 1048576 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
     "govee", headerFile, body, API_BASE + "/router/api/v1/device/control"
   ]
 }
@@ -226,8 +222,14 @@ function getMusicModeOptions(device) {
   if (!cap || !cap.parameters || !Array.isArray(cap.parameters.fields)) return []
   for (var i = 0; i < cap.parameters.fields.length; i++) {
     var field = cap.parameters.fields[i]
-    if (field.fieldName === "musicMode" && Array.isArray(field.options))
-      return field.options
+    if (field.fieldName === "musicMode" && Array.isArray(field.options)) {
+      var result = []
+      for (var j = 0; j < field.options.length; j++) {
+        var opt = field.options[j]
+        result.push({ name: String(opt.name || "").substring(0, 64), value: opt.value })
+      }
+      return result
+    }
   }
   return []
 }
@@ -283,23 +285,6 @@ function rgbToHsv(r, g, b) {
   return { h: h, s: s, v: v }
 }
 
-// Convert a color temperature in Kelvin to an approximate RGB for preview.
-function kelvinToRgb(kelvin) {
-  var temp = kelvin / 100
-  var r, g, b
-  if (temp <= 66) {
-    r = 255
-    g = Math.min(255, Math.max(0, 99.4708025861 * Math.log(temp) - 161.1195681661))
-  } else {
-    r = Math.min(255, Math.max(0, 329.698727446 * Math.pow(temp - 60, -0.1332047592)))
-    g = Math.min(255, Math.max(0, 288.1221695283 * Math.pow(temp - 60, -0.0755148492)))
-  }
-  if (temp >= 66) b = 255
-  else if (temp <= 19) b = 0
-  else b = Math.min(255, Math.max(0, 138.5177312231 * Math.log(temp - 10) - 305.0447927307))
-  return { r: Math.round(r), g: Math.round(g), b: Math.round(b) }
-}
-
 // ─── Capability extraction helpers ──────────────────────────────────────────
 
 // Get the capability object for a given type+instance from a device.
@@ -310,14 +295,6 @@ function getCapability(device, type, instance) {
     if (cap.type === type && cap.instance === instance) return cap
   }
   return null
-}
-
-// Extract the scene options list from a device's lightScene capability.
-// Returns an array of { name, value } objects.
-function getSceneOptions(device) {
-  var cap = getCapability(device, "devices.capabilities.dynamic_scene", "lightScene")
-  if (!cap || !cap.parameters || !Array.isArray(cap.parameters.options)) return []
-  return cap.parameters.options
 }
 
 // ─── Dynamic scenes endpoint ────────────────────────────────────────────────
@@ -333,7 +310,7 @@ function dynamicScenesCommand(headerFile, sku, device) {
   })
   return [
     "bash", "-c",
-    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -sS --max-time 10 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -sS --max-time 10 --max-filesize 1048576 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
     "govee", headerFile, body, API_BASE + "/router/api/v1/device/scenes"
   ]
 }
@@ -352,7 +329,7 @@ function parseDynamicScenes(raw) {
           for (var j = 0; j < cap.parameters.options.length; j++) {
             var opt = cap.parameters.options[j]
             if (opt && opt.name && opt.value)
-              scenes.push({ name: opt.name, value: opt.value })
+              scenes.push({ name: String(opt.name).substring(0, 128), value: opt.value })
           }
         }
       }
@@ -378,11 +355,6 @@ function hasCapability(device, type, instance) {
     if (cap.type === type && cap.instance === instance) return true
   }
   return false
-}
-
-// Check if a device is a controllable light (has power switch).
-function isLight(device) {
-  return hasCapability(device, "devices.capabilities.on_off", "powerSwitch")
 }
 
 // Check if a device is a fan.
@@ -458,20 +430,23 @@ function getWorkModeOptions(device) {
         }
       }
     }
-    modes.push({ name: mode.name, value: mode.value, speeds: speeds })
+    modes.push({ name: String(mode.name || "").substring(0, 64), value: mode.value, speeds: speeds })
   }
   return { modes: modes, maxSpeed: maxSpeed }
 }
 
 // Get a friendly display name for a device.
+// Truncates to a safe display length to prevent UI abuse from malicious API data.
 function deviceDisplayName(device) {
-  if (device.deviceName) return device.deviceName
-  return device.sku + " (" + device.device.substr(0, 8) + "...)"
+  var name = ""
+  if (device.deviceName) name = device.deviceName
+  else name = device.sku + " (" + device.device.substring(0, 8) + "...)"
+  return name.substring(0, 128)
 }
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
 function generateRequestId() {
   // Simple unique-ish ID: timestamp + random suffix.
-  return Date.now().toString(36) + "-" + Math.random().toString(36).substr(2, 6)
+  return Date.now().toString(36) + "-" + Math.random().toString(36).substring(2, 8)
 }

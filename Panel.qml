@@ -22,6 +22,11 @@ Panel {
   property bool hasKey: apiKey !== ""
   property bool setupMode: !hasKey
   property string setupError: ""
+  property bool credentialMigrationAttempted: false
+
+  // Path to the private header file used by curl commands (never contains the
+  // key in process argv — it is read from this file at runtime).
+  readonly property string headerFile: Api.headerFilePath(Quickshell.env("HOME"))
 
   property bool loading: false
   property string errorText: ""
@@ -71,8 +76,19 @@ Panel {
     printErrors: false
     onFileChanged: reload()
     onLoaded: {
-      root.apiKey = Api.parseKeyFile(text())
+      var loadedKey = Api.parseKeyFile(text())
+      root.apiKey = loadedKey
       root.setupMode = !root.hasKey
+      // Older versions created only govee.json and could leave it mode 0644.
+      // Rewrite once per plugin lifetime to repair its mode and create the
+      // private curl header file. The guard prevents the write/reload cycle
+      // from continually rewriting an already migrated credential.
+      if (root.hasKey && !root.credentialMigrationAttempted) {
+        root.credentialMigrationAttempted = true
+        var migrationError = Api.validateApiKey(loadedKey)
+        if (migrationError === "") root.persistApiKey(loadedKey)
+        else root.setupError = migrationError
+      }
     }
     onLoadFailed: {
       root.apiKey = ""
@@ -82,29 +98,37 @@ Panel {
 
   function saveApiKey(key) {
     var trimmed = key.replace(/^\s+|\s+$/g, "")
-    if (trimmed === "") {
-      setupError = "API key cannot be empty"
+    var error = Api.validateApiKey(trimmed)
+    if (error !== "") {
+      setupError = error
       return
     }
     setupError = ""
-    var filePath = Api.keyFilePath(Quickshell.env("HOME"))
-    var content = Api.keyFileContents(trimmed)
-    // Use a safe argv-array script that receives the path and content as arguments.
-    // No shell string interpolation of the API key.
-    keySaveProc.command = ["bash", "-c",
-      'mkdir -p "$(dirname "$1")" && printf \'%s\' "$2" > "$1"',
-      "govee-save", filePath, content
-    ]
+    credentialMigrationAttempted = true
+    persistApiKey(trimmed)
+  }
+
+  function persistApiKey(key) {
+    // The command contains paths only. The key is delivered over stdin once
+    // the child has started, then removed from QML process state.
+    keySaveProc.pendingKey = key
+    keySaveProc.command = Api.saveKeyCommand(Quickshell.env("HOME"))
     keySaveProc.running = true
   }
 
   function clearApiKey() {
-    keySaveProc.command = ["rm", "-f", Api.keyFilePath(Quickshell.env("HOME"))]
+    keySaveProc.command = Api.clearKeyCommand(Quickshell.env("HOME"))
     keySaveProc.running = true
   }
 
   Process {
     id: keySaveProc
+    property string pendingKey: ""
+    stdinEnabled: true
+    onStarted: {
+      write(pendingKey + "\n")
+      pendingKey = ""
+    }
     onExited: function(exitCode) {
       if (exitCode === 0) {
         keyFile.reload()
@@ -125,7 +149,7 @@ Panel {
     // Don't show loading spinner on subsequent refreshes — only first load
     if (deviceModel.count === 0) loading = true
     errorText = ""
-    listProc.command = Api.listDevicesCommand(apiKey)
+    listProc.command = Api.listDevicesCommand(headerFile)
     listProc.running = true
   }
 
@@ -257,7 +281,7 @@ Panel {
       fetchNextScenes()
       return
     }
-    scenesProc.command = Api.dynamicScenesCommand(apiKey, item.sku, item.deviceId)
+    scenesProc.command = Api.dynamicScenesCommand(headerFile, item.sku, item.deviceId)
     scenesProc.running = true
   }
 
@@ -311,7 +335,7 @@ Panel {
       return
     }
     var item = deviceModel.get(stateIndex)
-    stateProc.command = Api.deviceStateCommand(apiKey, item.sku, item.deviceId)
+    stateProc.command = Api.deviceStateCommand(headerFile, item.sku, item.deviceId)
     stateProc.running = true
   }
 
@@ -399,7 +423,7 @@ Panel {
     controlInFlightDevices = inflight
     resetRefreshTimer()
 
-    var cmd = Api.controlCommand(apiKey, sku, device, capability)
+    var cmd = Api.controlCommand(headerFile, sku, device, capability)
     controlQueue.push({ command: cmd, index: index })
     controlQueue = controlQueue  // trigger change
     processControlQueue()

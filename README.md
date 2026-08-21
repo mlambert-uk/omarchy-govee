@@ -28,6 +28,13 @@ Control Govee smart lights and fans from the Omarchy desktop bar.
 - Auto-refresh every 30 seconds while panel is open
 - Middle-click bar icon to force refresh
 
+## Requirements
+
+- [Omarchy](https://omarchy.org/) 4.0+ (Quattro) with Quickshell
+- `bash` (for subprocess orchestration)
+- `curl` 7.55+ (for API requests; uses `-K -` config-from-stdin)
+- A Govee Developer API key (free, see [Setup](#setup))
+
 ## Installation
 
 ```bash
@@ -39,6 +46,19 @@ Or for local development:
 ```bash
 ln -s /path/to/omarchy-govee ~/.config/omarchy/plugins/mlambert-uk.govee
 omarchy plugin enable mlambert-uk.govee
+```
+
+## Removal
+
+```bash
+omarchy plugin disable mlambert-uk.govee
+omarchy plugin remove mlambert-uk.govee
+```
+
+To also remove stored settings (API key):
+
+```bash
+rm -f ~/.local/state/omarchy/settings/govee.json ~/.local/state/omarchy/settings/govee-header
 ```
 
 ## Setup

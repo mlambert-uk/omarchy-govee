@@ -2,6 +2,13 @@
 //
 // All network calls are performed by QML Process components (curl). This
 // module builds the commands and parses the responses.
+//
+// Security:
+// - The API key is validated to contain only safe characters before storage.
+// - Key files are always written with mode 0600 (owner-only) using install(1).
+// - The API key is never passed as a curl command-line argument. It is read
+//   from a private file and piped to curl via --config stdin (-K -), keeping
+//   it out of /proc/*/cmdline for network operations.
 
 var API_BASE = "https://openapi.api.govee.com"
 
@@ -10,6 +17,12 @@ var API_BASE = "https://openapi.api.govee.com"
 // The key is persisted in a small JSON file so it survives shell restarts.
 function keyFilePath(home) {
   return home + "/.local/state/omarchy/settings/govee.json"
+}
+
+// A separate private file holds just the raw API key for curl consumption.
+// This avoids passing the key on any command line during API requests.
+function headerFilePath(home) {
+  return home + "/.local/state/omarchy/settings/govee-header"
 }
 
 function parseKeyFile(raw) {
@@ -25,15 +38,51 @@ function keyFileContents(apiKey) {
   return JSON.stringify({ apiKey: apiKey }, null, 2)
 }
 
+// Validate that an API key contains only safe characters.
+// Govee API keys are UUID-formatted hex strings with dashes.
+// Rejecting anything else prevents curl config injection and shell escaping issues.
+// Returns an error string if invalid, or "" if the key is acceptable.
+function validateApiKey(apiKey) {
+  if (!apiKey || apiKey.length === 0)
+    return "API key cannot be empty"
+  if (apiKey.length > 128)
+    return "API key is too long"
+  if (!/^[a-zA-Z0-9\-]+$/.test(apiKey))
+    return "API key contains invalid characters (only letters, digits, and dashes are allowed)"
+  return ""
+}
+
+// Shell command to persist both key files with restrictive permissions.
+// The API key is supplied on stdin after the process starts; it is never part
+// of this command array or visible in /proc/*/cmdline. Temporary files are
+// created beside their destinations and atomically renamed into place, which
+// also repairs permissive modes left by older plugin versions.
+function saveKeyCommand(home) {
+  var dir = home + "/.local/state/omarchy/settings"
+  var kFile = keyFilePath(home)
+  var hFile = headerFilePath(home)
+  return [
+    "bash", "-c",
+    'set -e; umask 077; IFS= read -r key; [[ -n "$key" && ${#key} -le 128 && "$key" =~ ^[a-zA-Z0-9-]+$ ]]; mkdir -p -- "$1"; json_tmp=$(mktemp "$1/.govee.json.XXXXXX"); header_tmp=$(mktemp "$1/.govee-header.XXXXXX"); trap \'rm -f -- "$json_tmp" "$header_tmp"\' EXIT; printf \'{\\n  "apiKey": "%s"\\n}\\n\' "$key" > "$json_tmp"; printf \'%s\' "$key" > "$header_tmp"; chmod 600 -- "$json_tmp" "$header_tmp"; mv -f -- "$json_tmp" "$2"; mv -f -- "$header_tmp" "$3"; trap - EXIT',
+    "govee-save", dir, kFile, hFile
+  ]
+}
+
+// Shell command to remove both key files.
+function clearKeyCommand(home) {
+  return ["rm", "-f", keyFilePath(home), headerFilePath(home)]
+}
+
 // ─── Device list ────────────────────────────────────────────────────────────
 
 // Curl command to fetch all devices.
-function listDevicesCommand(apiKey) {
+// The API key header is read from the private header file and piped to curl
+// via -K - (config from stdin) so it never appears in process arguments.
+function listDevicesCommand(headerFile) {
   return [
-    "curl", "-fsS", "--max-time", "10",
-    "-H", "Govee-API-Key: " + apiKey,
-    "-H", "Content-Type: application/json",
-    API_BASE + "/router/api/v1/user/devices"
+    "bash", "-c",
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -fsS --max-time 10 -H "Content-Type: application/json" -K - "$2"',
+    "govee", headerFile, API_BASE + "/router/api/v1/user/devices"
   ]
 }
 
@@ -52,7 +101,7 @@ function parseDevicesResponse(raw) {
 
 // Curl command to query a single device's current state.
 // The state endpoint is POST with sku+device in the JSON body.
-function deviceStateCommand(apiKey, sku, device) {
+function deviceStateCommand(headerFile, sku, device) {
   var body = JSON.stringify({
     requestId: generateRequestId(),
     payload: {
@@ -61,12 +110,9 @@ function deviceStateCommand(apiKey, sku, device) {
     }
   })
   return [
-    "curl", "-sS", "--max-time", "10",
-    "-X", "POST",
-    "-H", "Govee-API-Key: " + apiKey,
-    "-H", "Content-Type: application/json",
-    "-d", body,
-    API_BASE + "/router/api/v1/device/state"
+    "bash", "-c",
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -sS --max-time 10 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
+    "govee", headerFile, body, API_BASE + "/router/api/v1/device/state"
   ]
 }
 
@@ -92,7 +138,7 @@ function parseDeviceState(raw) {
 
 // Build a curl command to send a control request.
 // capability: { type, instance, value }
-function controlCommand(apiKey, sku, device, capability) {
+function controlCommand(headerFile, sku, device, capability) {
   var body = JSON.stringify({
     requestId: generateRequestId(),
     payload: {
@@ -102,12 +148,9 @@ function controlCommand(apiKey, sku, device, capability) {
     }
   })
   return [
-    "curl", "-fsS", "--max-time", "10",
-    "-X", "POST",
-    "-H", "Govee-API-Key: " + apiKey,
-    "-H", "Content-Type: application/json",
-    "-d", body,
-    API_BASE + "/router/api/v1/device/control"
+    "bash", "-c",
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -fsS --max-time 10 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
+    "govee", headerFile, body, API_BASE + "/router/api/v1/device/control"
   ]
 }
 
@@ -280,7 +323,7 @@ function getSceneOptions(device) {
 // ─── Dynamic scenes endpoint ────────────────────────────────────────────────
 
 // Curl command to fetch dynamic scenes for a device.
-function dynamicScenesCommand(apiKey, sku, device) {
+function dynamicScenesCommand(headerFile, sku, device) {
   var body = JSON.stringify({
     requestId: generateRequestId(),
     payload: {
@@ -289,12 +332,9 @@ function dynamicScenesCommand(apiKey, sku, device) {
     }
   })
   return [
-    "curl", "-sS", "--max-time", "10",
-    "-X", "POST",
-    "-H", "Govee-API-Key: " + apiKey,
-    "-H", "Content-Type: application/json",
-    "-d", body,
-    API_BASE + "/router/api/v1/device/scenes"
+    "bash", "-c",
+    'printf \'header = "Govee-API-Key: %s"\\n\' "$(cat "$1")" | exec curl -sS --max-time 10 -X POST -H "Content-Type: application/json" -d "$2" -K - "$3"',
+    "govee", headerFile, body, API_BASE + "/router/api/v1/device/scenes"
   ]
 }
 

@@ -3,7 +3,7 @@
   "id": "mlambert-uk.govee",
   "name": "Govee Lights",
   "version": "1.0.1",
-  "author": "mlambert-uk",
+  "author": "Mark Lambert",
   "description": "Control Govee smart lights from the desktop. Discover devices, toggle power, and adjust brightness from a bar widget panel.",
   "kinds": [
     "bar-widget"
